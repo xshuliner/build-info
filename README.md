@@ -1,83 +1,48 @@
 # @xshuliner/build-info
 
-`@xshuliner/build-info` 是一个构建期信息采集工具。它会在构建前生成 Git、CI、部署、运行时公开配置等信息，并输出到默认静态目录 `/__xshuliner__/`，页面运行时可以通过 `window.__xshuliner__` 读取，也可以用 React/Next.js 组件渲染。
+构建期生成前端项目的构建信息、部署信息、Git 信息和 CI 信息，并输出到静态目录。页面运行时可以通过 `window.__xshuliner__` 查看，也可以用 React/Next.js 组件展示。
 
-它不会收集任何线上用户数据。所有信息都来自构建期，不会在浏览器运行时读取 Git 信息。
+这个包只在构建期采集信息，不会收集线上用户数据，也不会在浏览器里执行 Git 命令。
 
-## 安装
+## 快速接入
+
+安装：
 
 ```bash
 pnpm add -D @xshuliner/build-info
 ```
 
-要求 Node.js >= 20，包本身是 ESM only。
+在业务项目构建前生成信息：
 
-## CLI
-
-```bash
-xshuliner-build-info generate
-xbi generate
+```json
+{
+  "scripts": {
+    "build": "xbi generate --env production && vite build"
+  }
+}
 ```
 
-默认输出：
+默认生成：
 
 ```text
 public/__xshuliner__/build-info.json
 public/__xshuliner__/build-info.js
 ```
 
-完整参数：
-
-```bash
-xbi generate \
-  --out public/__xshuliner__ \
-  --global-name __xshuliner__ \
-  --app-name my-app \
-  --app-version 1.0.0 \
-  --env production \
-  --mode client \
-  --deploy-target production \
-  --deploy-region global \
-  --deploy-url https://example.com \
-  --release-id prod-xxx \
-  --build-id build-xxx
-```
-
-## Scripts 示例
-
-```json
-{
-  "scripts": {
-    "prebuild": "xbi generate --env production",
-    "build": "vite build"
-  }
-}
-```
-
-## Vite 接入
-
-```json
-{
-  "scripts": {
-    "build": "xbi generate --env production --mode client && vite build"
-  }
-}
-```
-
-构建后页面可以加载：
+页面中加载：
 
 ```html
 <script src="/__xshuliner__/build-info.js"></script>
 ```
 
-然后在控制台执行：
+浏览器控制台：
 
 ```js
 window.__xshuliner__
 window.__xshuliner__.print()
 ```
 
-## React 接入
+## React 使用
 
 ```tsx
 import { BuildInfoPanel } from '@xshuliner/build-info/react'
@@ -87,13 +52,11 @@ export function Footer() {
 }
 ```
 
-组件只在客户端读取 `window`。如果页面没有预先加载 `build-info.js`，它会 fetch `/__xshuliner__/build-info.json`。
+组件会优先读取 `window.__xshuliner__`；如果没有加载 `build-info.js`，会请求 `/__xshuliner__/build-info.json`。
 
-```tsx
-<BuildInfoPanel src="/custom/build-info.json" globalName="__custom__" compact />
-```
+## Next.js 使用
 
-## Next.js App Router
+App Router：
 
 ```tsx
 import { BuildInfoScript } from '@xshuliner/build-info/next'
@@ -110,29 +73,48 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 }
 ```
 
-## Next.js Pages Router
+再在任意客户端组件里使用：
 
 ```tsx
-import { BuildInfoScript } from '@xshuliner/build-info/next'
-import type { AppProps } from 'next/app'
+import { BuildInfoPanel } from '@xshuliner/build-info/react'
 
-export default function App({ Component, pageProps }: AppProps) {
-  return (
-    <>
-      <BuildInfoScript strategy="beforeInteractive" />
-      <Component {...pageProps} />
-    </>
-  )
+export function BuildFooter() {
+  return <BuildInfoPanel compact />
 }
 ```
 
-## Taro H5
+`next` 是 optional peer dependency，只有导入 `@xshuliner/build-info/next` 时才需要业务项目安装 Next.js。
 
-在 H5 构建命令前执行 `xbi generate`，让产物目录包含 `public/__xshuliner__`。Taro H5 页面中可以直接访问 `window.__xshuliner__`，React 组件也可以照常使用：
+## CLI
 
 ```bash
-xbi generate --env production --mode h5 && taro build --type h5
+xbi generate
+xshuliner-build-info generate
 ```
+
+常用参数：
+
+```bash
+xbi generate \
+  --out public/__xshuliner__ \
+  --global-name __xshuliner__ \
+  --app-name my-app \
+  --app-version 1.0.0 \
+  --env production \
+  --mode client \
+  --deploy-target production \
+  --deploy-url https://example.com \
+  --release-id prod-xxx \
+  --build-id build-xxx
+```
+
+默认值：
+
+| 项 | 默认值 |
+| --- | --- |
+| 全局变量 | `window.__xshuliner__` |
+| 输出目录 | `public/__xshuliner__` |
+| 页面访问路径 | `/__xshuliner__/` |
 
 ## Node API
 
@@ -147,153 +129,7 @@ await generateBuildInfo({
 })
 ```
 
-返回：
-
-```ts
-interface GenerateBuildInfoResult {
-  info: BuildInfo
-  jsonPath: string
-  jsPath: string
-}
-```
-
-## React API
-
-```ts
-interface BuildInfoPanelProps {
-  src?: string
-  globalName?: string
-  compact?: boolean
-  className?: string
-  style?: React.CSSProperties
-}
-```
-
-默认：
-
-```ts
-src = '/__xshuliner__/build-info.json'
-globalName = '__xshuliner__'
-```
-
-## Next.js API
-
-```ts
-interface BuildInfoScriptProps {
-  src?: string
-  strategy?: 'beforeInteractive' | 'afterInteractive' | 'lazyOnload' | 'worker'
-}
-```
-
-默认输出：
-
-```tsx
-<Script src="/__xshuliner__/build-info.js" strategy="beforeInteractive" />
-```
-
-`next` 是 optional peerDependency，只有导入 `@xshuliner/build-info/next` 时才需要安装。
-
-## 数据结构
-
-```ts
-interface BuildInfo {
-  schemaVersion: string
-  app: { name: string; version?: string; env: string; mode?: string }
-  build: {
-    time: string
-    timestamp: number
-    user?: string
-    machine?: string
-    nodeVersion?: string
-    packageManager?: string
-  }
-  git: {
-    branch?: string
-    tag?: string
-    nearestTag?: string
-    commit: string
-    shortCommit: string
-    commitTime?: string
-    dirty?: boolean
-    remote?: string
-    latestCommits: Array<{
-      hash: string
-      shortHash: string
-      author: string
-      date: string
-      message: string
-    }>
-  }
-  ci?: {
-    provider?: string
-    runId?: string
-    runNumber?: string
-    workflow?: string
-    jobUrl?: string
-    commitUrl?: string
-  }
-  deploy?: {
-    target?: string
-    region?: string
-    url?: string
-    releaseId?: string
-    buildId?: string
-  }
-  runtime?: {
-    apiBaseUrl?: string
-    publicPath?: string
-  }
-}
-```
-
-## 信息来源
-
-`app.name` 优先级：CLI `--app-name`、`XSHULINER_APP_NAME`、`package.json.name`、`unknown-app`。
-
-`app.version` 优先级：CLI `--app-version`、`XSHULINER_APP_VERSION`、`package.json.version`、空字符串。
-
-`app.env` 优先级：CLI `--env`、`XSHULINER_APP_ENV`、`NODE_ENV`、`development`。
-
-`deploy.url` 优先级：CLI `--deploy-url`、`XSHULINER_DEPLOY_URL`、`VERCEL_PROJECT_PRODUCTION_URL`、`CF_PAGES_URL`。
-
-运行时公开配置支持：
-
-```text
-XSHULINER_PUBLIC_API_BASE_URL
-NEXT_PUBLIC_API_BASE_URL
-VITE_API_BASE_URL
-XSHULINER_PUBLIC_PATH
-```
-
-Git remote 会脱敏。比如：
-
-```text
-https://token@github.com/foo/bar.git -> https://github.com/foo/bar
-git@github.com:foo/bar.git -> https://github.com/foo/bar
-```
-
-## GitHub Actions
-
-本仓库已经迁移了公共 reusable workflows：
-
-```text
-.github/workflows/release-version.yml
-.github/workflows/release-tag.yml
-.github/workflows/release-deploy.yml
-```
-
-本包自己的 CI 使用 `.github/workflows/ci.yml` 串联：
-
-```text
-pnpm install --frozen-lockfile
-pnpm lint
-pnpm test
-pnpm build
-node dist/cli.js generate --env ci --mode github-actions
-pnpm pack
-```
-
-业务项目可在构建命令中采集 CI 信息：
+## GitHub Actions 接入业务项目
 
 ```yaml
 name: CI
@@ -320,11 +156,46 @@ jobs:
       - run: pnpm build
 ```
 
-手动发布包可使用 `.github/workflows/release-package.yml`。它会先跑质量检查和构建，再调用 `release-tag.yml` 计算并创建 tag；如果选择发布 npm，需要配置 `NPM_TOKEN`。
+这样生成的 `build-info.json` 会包含 GitHub Actions run、commit、branch 等构建期信息。
 
-## 缓存策略
+## 发布这个包到 npm
 
-`build-info.js` 和 `build-info.json` 建议设置 no-store，避免页面看到旧部署信息。
+发布前确认你有 `@xshuliner` 这个 npm scope 的发布权限。因为这是 scoped package，首次公开发布必须显式使用 public access。
+
+首次发布建议在本地完成：
+
+```bash
+pnpm install
+pnpm build
+pnpm test
+pnpm lint
+pnpm typecheck
+npm pack --dry-run
+npm login
+npm publish --access public
+```
+
+直接发布需要 npm 账号满足发布认证要求，例如开启 2FA，或使用允许发布的 granular access token。以后每次发布前都要先修改 `package.json` 里的 `version`，npm 不允许重复发布同一个版本号。
+
+包第一次发布成功后，推荐改用 GitHub Actions + Trusted Publishing：
+
+1. 在 npm 包页面配置 Trusted Publishing，指向这个仓库和 `.github/workflows/release-package.yml`。
+2. 打开 GitHub `Actions` -> `Release Package`。
+3. 确认 `package.json` 的 `version` 是本次要发布的新版本。
+4. 选择版本类型和是否 `publish_to_npm`。
+5. 运行 workflow；它会执行安装、lint、test、build、生成 build info、打包，并在发布时执行 `npm publish --access public`。
+
+如果不用 Trusted Publishing，也可以在 GitHub Actions Secrets 配置 `NPM_TOKEN`，再用同一个 `Release Package` workflow 发布。
+
+发布成功后，其他项目就可以安装：
+
+```bash
+pnpm add -D @xshuliner/build-info
+```
+
+## 缓存建议
+
+`build-info.js` 和 `build-info.json` 应该禁用缓存，避免页面看到旧部署信息。
 
 Cloudflare Pages `_headers`：
 
@@ -364,35 +235,35 @@ const nextConfig = {
 export default nextConfig
 ```
 
-## 安全注意事项
+## 安全说明
 
-不要把 secret、token、私有环境变量写入 public runtime 信息。这个包只会读取明确列出的公开环境变量，但 CLI 参数也会进入公开文件，传参时要保持克制。
+- 不要把 secret、token、私有环境变量通过 CLI 参数或公开环境变量写进 build info。
+- Git remote 会脱敏，但 commit message 可能包含敏感信息，公开站点要注意提交内容。
+- `build-info.js` 会安全序列化 JSON，并转义 `<`，避免直接生成危险脚本片段。
+- 这个包只收集构建期信息，不收集线上用户数据。
 
-Git remote 会脱敏，但 commit message 可能包含敏感信息。公开站点如果对 commit message 有严格要求，可以在发布策略中约束提交内容，或在后续版本中增加自定义过滤。
+## 开发维护
 
-`build-info.js` 会安全序列化 JSON，并转义 `<`，降低被内嵌到 HTML 时产生脚本注入的风险。
+```bash
+pnpm install
+pnpm build
+pnpm test
+pnpm lint
+pnpm typecheck
+node dist/cli.js generate
+```
+
+校验 GitHub Actions：
+
+```bash
+actionlint .github/workflows/*.yml
+```
 
 ## FAQ
 
-### 默认全局变量是什么？
-
-`window.__xshuliner__`。
-
-### 默认静态资源目录是什么？
-
-`/__xshuliner__/`，对应项目中的 `public/__xshuliner__`。
-
-### 浏览器会执行 Git 命令吗？
-
-不会。Git、CI、部署信息都在构建期采集。
-
 ### 非 Git 仓库会失败吗？
 
-不会。Git 信息会返回空字符串或空数组。
-
-### 为什么页面看到旧信息？
-
-通常是缓存导致。请给 `/__xshuliner__/*` 配置 `no-store`。
+不会。Git 字段会返回空字符串或空数组。
 
 ### 可以改全局变量名吗？
 
@@ -408,8 +279,10 @@ React 组件同步传入：
 <BuildInfoPanel globalName="__my_app__" />
 ```
 
-## Roadmap
+### Taro H5 怎么接？
 
-- 支持自定义字段过滤器。
-- 支持更多 CI provider 的深度链接。
-- 支持生成 markdown 或 HTML 调试页。
+在 H5 构建前执行：
+
+```bash
+xbi generate --env production --mode h5 && taro build --type h5
+```
