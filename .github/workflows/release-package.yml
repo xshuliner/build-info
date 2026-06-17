@@ -90,6 +90,7 @@ jobs:
     with:
       bump: ${{ inputs.bump }}
       dry_run: ${{ inputs.dry_run }}
+      sync_package_json_version: true
 
   publish:
     needs:
@@ -106,6 +107,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v6
         with:
+          ref: ${{ needs.tag.outputs.version }}
           fetch-depth: 0
 
       - name: Setup Node

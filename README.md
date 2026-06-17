@@ -175,15 +175,14 @@ npm login
 npm publish --access public
 ```
 
-直接发布需要 npm 账号满足发布认证要求，例如开启 2FA，或使用允许发布的 granular access token。以后每次发布前都要先修改 `package.json` 里的 `version`，npm 不允许重复发布同一个版本号。
+本地直接发布需要 npm 账号满足发布认证要求，例如开启 2FA，或使用允许发布的 granular access token。本地发布前要先修改 `package.json` 里的 `version`，npm 不允许重复发布同一个版本号。
 
 包第一次发布成功后，推荐改用 GitHub Actions + Trusted Publishing：
 
 1. 在 npm 包页面配置 Trusted Publishing，指向这个仓库和 `.github/workflows/release-package.yml`。
 2. 打开 GitHub `Actions` -> `Release Package`。
-3. 确认 `package.json` 的 `version` 是本次要发布的新版本。
-4. 选择版本类型和是否 `publish_to_npm`。
-5. 运行 workflow；它会执行安装、lint、test、build、生成 build info、打包，并在发布时执行 `npm publish --access public`。
+3. 选择版本类型和是否 `publish_to_npm`。
+4. 运行 workflow；它会执行安装、lint、test、build、生成 build info、打包，根据已有 tag 计算下一版，把 `package.json` 的 `version` 同步为该版本号，提交后创建 tag，并在发布时执行 `npm publish --access public`。
 
 如果不用 Trusted Publishing，也可以在 GitHub Actions Secrets 配置 `NPM_TOKEN`，再用同一个 `Release Package` workflow 发布。
 

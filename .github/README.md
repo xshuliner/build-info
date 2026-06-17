@@ -3,7 +3,7 @@
 本仓库有两类 workflow：
 
 - `CI`：push、pull request 或手动触发，执行安装、lint、test、build、生成 build info、npm pack。
-- `Release Package`：手动触发，先跑质量检查，再调用本仓库迁移来的 `release-tag.yml` 计算和创建 tag，可选发布 npm。
+- `Release Package`：手动触发，先跑质量检查，再调用本仓库迁移来的 `release-tag.yml` 计算版本、同步 `package.json`、创建 tag，可选发布 npm。
 
 公共 reusable workflows 已同步迁移：
 
@@ -39,6 +39,10 @@
 2. 选择 `bump`：`patch`、`minor`、`major` 或 `none`。
 3. 需要演练时勾选 `dry_run`。
 4. 需要发布 npm 时勾选 `publish_to_npm`，并确保已配置 `NPM_TOKEN`。
+
+`Release Package` 会根据已有 tag 计算下一版，并在创建 tag 前把根目录 `package.json` 的 `version` 同步为该版本号、提交到当前分支。`dry_run` 只计算和构建，不会提交、打 tag 或发布。
+
+单独运行 `Release Tag` 时，如果需要同样同步 `package.json`，勾选 `sync_package_json_version`；这个选项要求 workflow 运行在分支 ref 上。
 
 ## 构建信息产物
 
