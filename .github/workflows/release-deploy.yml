@@ -53,6 +53,11 @@ on:
         description: "Build command for the current project."
         required: true
         type: string
+      sync_package_json_version_before_build:
+        description: "Temporarily update package.json version to the resolved release version before build. No commit is created."
+        required: false
+        type: boolean
+        default: true
       build_path:
         description: "Build output path, relative to working_directory unless absolute."
         required: false
@@ -336,6 +341,7 @@ jobs:
           echo "node_version=${{ inputs.node_version || '<skip setup-node>' }}"
           echo "install_command=${{ inputs.install_command != '' && '<configured>' || '<skip>' }}"
           echo "build_command=<configured>"
+          echo "sync_package_json_version_before_build=${{ inputs.sync_package_json_version_before_build }}"
           echo "server_path=${{ inputs.server_path != '' && '<configured>' || '<empty>' }}"
           echo "server_path_map=${{ inputs.server_path_map != '{}' && '<configured>' || '<empty>' }}"
           echo "server_preview_url=${{ inputs.server_preview_url || '<empty>' }}"
@@ -510,6 +516,31 @@ jobs:
           echo "DEPLOY_ENV=$DEPLOY_ENV"
           echo "PROJECT_NAME=$PROJECT_NAME"
           echo "RELEASE_VERSION=$RELEASE_VERSION"
+          echo "sync_package_json_version_before_build=${{ inputs.sync_package_json_version_before_build }}"
+
+          if [ "${{ inputs.sync_package_json_version_before_build }}" = "true" ] && [ "${{ inputs.bump }}" != "none" ]; then
+            if [ -z "${RELEASE_VERSION_NUMBER:-}" ]; then
+              echo "::warning::Cannot sync package.json version because RELEASE_VERSION_NUMBER is empty."
+            elif [ ! -f package.json ]; then
+              echo "package.json not found in $(pwd); skip version sync."
+            else
+              node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises';
+
+          const file = 'package.json';
+          const version = process.env.RELEASE_VERSION_NUMBER;
+          const pkg = JSON.parse(await readFile(file, 'utf8'));
+          pkg.version = version;
+          await writeFile(file, `${JSON.stringify(pkg, null, 2)}\n`);
+          console.log(`package.json version set to ${version} for build.`);
+          NODE
+              if git ls-files --error-unmatch package.json >/dev/null 2>&1; then
+                git update-index --assume-unchanged package.json
+                echo "package.json version sync is hidden from git status for this build."
+              fi
+            fi
+          fi
+
           ${{ inputs.build_command }}
           echo "Build completed."
           echo "::endgroup::"

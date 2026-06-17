@@ -131,6 +131,8 @@ await generateBuildInfo({
 
 ## GitHub Actions 接入业务项目
 
+普通 CI 只需要在前端构建前生成 build info：
+
 ```yaml
 name: CI
 
@@ -152,11 +154,80 @@ jobs:
           package-manager-cache: false
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: xbi generate --env production --mode github-actions
+      - run: pnpm exec xbi generate --env production --mode github-actions
       - run: pnpm build
 ```
 
 这样生成的 `build-info.json` 会包含 GitHub Actions run、commit、branch 等构建期信息。
+
+正式发布或部署时，如果版本号由 tag 自增，推荐先完成版本动作，再生成 build info。`xbi generate` 读取应用版本的优先级是 `--app-version`、`XSHULINER_APP_VERSION`、当前工作区的 `package.json.version`；如果希望它读取自增后的 `package.json.version`，就不要在生成命令里覆盖 app version，并在当前 Actions 工作区临时写入新版本号。
+
+如果业务仓库复用 `release-tag.yml`，推荐顺序如下：
+
+```yaml
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump before release.
+        required: true
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    uses: ./.github/workflows/release-tag.yml
+    with:
+      bump: ${{ inputs.bump }}
+
+  build:
+    needs: tag
+    if: needs.tag.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.tag.outputs.version }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Sync package version for this build
+        env:
+          VERSION_NUMBER: ${{ needs.tag.outputs.version_number }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises'
+
+          const file = 'package.json'
+          const version = process.env.VERSION_NUMBER
+          const pkg = JSON.parse(await readFile(file, 'utf8'))
+          pkg.version = version
+          await writeFile(file, `${JSON.stringify(pkg, null, 2)}\n`)
+          NODE
+      - name: Generate build info
+        env:
+          XSHULINER_RELEASE_ID: ${{ needs.tag.outputs.version }}
+          XSHULINER_BUILD_ID: ${{ github.run_number }}
+        run: pnpm exec xbi generate --env production --mode github-actions
+      - run: pnpm build
+```
+
+关键点是：`release-tag.yml` 先根据已有 tag 计算下一版并创建 tag；后续 build job checkout 这个 tag，把 `needs.tag.outputs.version_number` 临时写入当前工作区的 `package.json.version`，再执行 `xbi generate`。这样生成的 `build-info.json` 会拿到更新后的版本号，但仓库不会多出同步 `package.json` 的提交。
+
+如果不使用 reusable workflow，也保持同样顺序：计算下一版、创建 tag、在构建工作区临时写入 `package.json.version`、执行 `xbi generate`、最后运行前端构建。临时写入只服务本次构建，不需要 `git commit`。
 
 ## 发布这个包到 npm
 
