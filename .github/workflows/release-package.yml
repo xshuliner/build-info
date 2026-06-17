@@ -1,0 +1,130 @@
+name: Release Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump before release.
+        required: true
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+          - none
+      dry_run:
+        description: Calculate and build without creating a tag or publishing.
+        required: false
+        type: boolean
+        default: false
+      publish_to_npm:
+        description: Publish to npm after the release tag is created.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-package-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Generate release build info
+        env:
+          XSHULINER_APP_ENV: release
+          XSHULINER_APP_MODE: github-actions
+          XSHULINER_DEPLOY_TARGET: npm-package
+          XSHULINER_DEPLOY_REGION: npm
+          XSHULINER_RELEASE_ID: ${{ github.run_id }}-${{ github.sha }}
+          XSHULINER_BUILD_ID: ${{ github.run_number }}
+        run: node dist/cli.js generate --env release --mode github-actions --deploy-target npm-package
+
+      - name: Pack npm package
+        run: pnpm pack
+
+      - name: Upload release package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-package-${{ github.run_id }}
+          path: xshuliner-build-info-*.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  tag:
+    needs: quality
+    uses: ./.github/workflows/release-tag.yml
+    with:
+      bump: ${{ inputs.bump }}
+      dry_run: ${{ inputs.dry_run }}
+
+  publish:
+    needs:
+      - quality
+      - tag
+    if: needs.tag.outputs.created == 'true' && inputs.publish_to_npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build package
+        run: pnpm build
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public

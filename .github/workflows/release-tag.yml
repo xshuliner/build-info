@@ -1,0 +1,156 @@
+name: Release Tag
+
+on:
+  workflow_call:
+    inputs:
+      bump:
+        description: "Version bump: major, minor, patch, or none."
+        required: false
+        type: string
+        default: "patch"
+      prefix:
+        description: "Tag prefix."
+        required: false
+        type: string
+        default: "v"
+      major:
+        description: "Only calculate tags inside this major version."
+        required: false
+        type: string
+        default: ""
+      dry_run:
+        description: "Calculate the next version without pushing the tag."
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      version:
+        description: "Resolved tag, for example v1.2.3."
+        value: ${{ jobs.version.outputs.version }}
+      version_number:
+        description: "Resolved version without prefix, for example 1.2.3."
+        value: ${{ jobs.version.outputs.version_number }}
+      created:
+        description: "Whether this run created a tag."
+        value: ${{ jobs.summary.outputs.created }}
+
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump."
+        required: true
+        type: choice
+        default: "patch"
+        options:
+          - major
+          - minor
+          - patch
+          - none
+      prefix:
+        description: "Tag prefix."
+        required: false
+        type: string
+        default: "v"
+      major:
+        description: "Only calculate tags inside this major version."
+        required: false
+        type: string
+        default: ""
+      dry_run:
+        description: "Calculate the next version without pushing the tag."
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-tag-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    uses: ./.github/workflows/release-version.yml
+    with:
+      bump: ${{ inputs.bump }}
+      prefix: ${{ inputs.prefix }}
+      major: ${{ inputs.major }}
+
+  create:
+    needs: version
+    if: needs.version.outputs.should_tag == 'true' && ! inputs.dry_run
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout tags
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create git tag
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force
+
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::tag $VERSION already exists"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          echo "::group::Create tag"
+          echo "version=$VERSION"
+          echo "commit=$GITHUB_SHA"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "refs/tags/$VERSION"
+          echo "Tag pushed."
+          echo "::endgroup::"
+
+  summary:
+    needs:
+      - version
+      - create
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      created: ${{ steps.summary.outputs.created }}
+
+    steps:
+      - name: Tag summary
+        id: summary
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          VERSION_NUMBER: ${{ needs.version.outputs.version_number }}
+          LATEST_TAG: ${{ needs.version.outputs.latest_tag }}
+          SHOULD_TAG: ${{ needs.version.outputs.should_tag }}
+          CREATE_RESULT: ${{ needs.create.result }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          created="false"
+          if [ "$SHOULD_TAG" = "true" ] && [ "$DRY_RUN" != "true" ] && [ "$CREATE_RESULT" = "success" ]; then
+            created="true"
+          fi
+
+          echo "created=$created" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release Tag"
+            echo ""
+            echo "- Version: ${VERSION:-<unresolved>}"
+            echo "- Version number: ${VERSION_NUMBER:-<unresolved>}"
+            echo "- Previous tag: ${LATEST_TAG:-<none>}"
+            echo "- Dry run: $DRY_RUN"
+            echo "- Created: $created"
+          } >> "$GITHUB_STEP_SUMMARY"

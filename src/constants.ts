@@ -1,0 +1,5 @@
+export const DEFAULT_OUT_DIR = 'public/__xshuliner__'
+export const DEFAULT_GLOBAL_NAME = '__xshuliner__'
+export const DEFAULT_JSON_SRC = '/__xshuliner__/build-info.json'
+export const DEFAULT_SCRIPT_SRC = '/__xshuliner__/build-info.js'
+export const SCHEMA_VERSION = '1.0.0'

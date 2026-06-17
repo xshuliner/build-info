@@ -1,0 +1,136 @@
+name: Release Version
+
+on:
+  workflow_call:
+    inputs:
+      bump:
+        description: "Version bump: major, minor, patch, or none."
+        required: false
+        type: string
+        default: "patch"
+      prefix:
+        description: "Git tag prefix."
+        required: false
+        type: string
+        default: "v"
+      major:
+        description: "Only calculate tags inside this major version."
+        required: false
+        type: string
+        default: ""
+    outputs:
+      version:
+        description: "Resolved tag, for example v1.2.3."
+        value: ${{ jobs.resolve.outputs.version }}
+      version_number:
+        description: "Resolved version without prefix, for example 1.2.3."
+        value: ${{ jobs.resolve.outputs.version_number }}
+      latest_tag:
+        description: "Latest matched tag before bumping."
+        value: ${{ jobs.resolve.outputs.latest_tag }}
+      should_tag:
+        description: "Whether this version should create a new tag."
+        value: ${{ jobs.resolve.outputs.should_tag }}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_number: ${{ steps.version.outputs.version_number }}
+      latest_tag: ${{ steps.version.outputs.latest_tag }}
+      should_tag: ${{ steps.version.outputs.should_tag }}
+
+    steps:
+      - name: Checkout tags
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve next version
+        id: version
+        shell: bash
+        env:
+          BUMP: ${{ inputs.bump }}
+          PREFIX: ${{ inputs.prefix }}
+          MAJOR_FILTER: ${{ inputs.major }}
+        run: |
+          set -euo pipefail
+
+          case "$BUMP" in
+            major|minor|patch|none) ;;
+            *)
+              echo "::error::bump must be one of: major, minor, patch, none"
+              exit 1
+              ;;
+          esac
+
+          git fetch --tags --force
+
+          if [ -n "$MAJOR_FILTER" ]; then
+            pattern="${PREFIX}${MAJOR_FILTER}.*.*"
+            base_number="${MAJOR_FILTER}.0.0"
+          else
+            pattern="${PREFIX}[0-9]*.[0-9]*.[0-9]*"
+            base_number="0.0.0"
+          fi
+
+          latest_tag="$(git tag -l "$pattern" --sort=-v:refname | head -n 1 || true)"
+          if [ -n "$latest_tag" ]; then
+            version_number="${latest_tag#"$PREFIX"}"
+          else
+            version_number="$base_number"
+          fi
+
+          if [[ ! "$version_number" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::latest tag '$latest_tag' does not match ${PREFIX}<major>.<minor>.<patch>"
+            exit 1
+          fi
+
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          should_tag="true"
+
+          case "$BUMP" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+            none)
+              should_tag="false"
+              ;;
+          esac
+
+          version_number="${major}.${minor}.${patch}"
+          version="${PREFIX}${version_number}"
+
+          {
+            echo "version=$version"
+            echo "version_number=$version_number"
+            echo "latest_tag=$latest_tag"
+            echo "should_tag=$should_tag"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "::group::Version"
+          echo "tag_pattern=$pattern"
+          echo "latest_tag=${latest_tag:-<none>}"
+          echo "bump=$BUMP"
+          echo "prefix=$PREFIX"
+          echo "major_filter=${MAJOR_FILTER:-<any>}"
+          echo "next_version=$version"
+          echo "version_number=$version_number"
+          echo "will_create_tag=$should_tag"
+          echo "::endgroup::"

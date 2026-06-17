@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Generate build info
+        env:
+          XSHULINER_APP_ENV: ci
+          XSHULINER_APP_MODE: github-actions
+          XSHULINER_DEPLOY_TARGET: npm-package
+          XSHULINER_DEPLOY_REGION: github
+          XSHULINER_RELEASE_ID: ${{ github.run_id }}-${{ github.sha }}
+          XSHULINER_BUILD_ID: ${{ github.run_number }}
+        run: node dist/cli.js generate --env ci --mode github-actions --deploy-target npm-package
+
+      - name: Verify generated JSON
+        run: node -e "JSON.parse(require('node:fs').readFileSync('public/__xshuliner__/build-info.json', 'utf8'))"
+
+      - name: Pack npm package
+        run: pnpm pack
+
+      - name: Upload build info artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-info-ci-${{ github.run_id }}
+          path: public/__xshuliner__
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload npm package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-package-${{ github.run_id }}
+          path: xshuliner-build-info-*.tgz
+          if-no-files-found: error
+          retention-days: 7

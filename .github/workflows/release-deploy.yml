@@ -1,0 +1,1353 @@
+name: Release Deploy
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: "Deployment target: server, web, api, or weapp. web/api use the server deployment path."
+        required: true
+        type: string
+      env:
+        description: "Deployment environment name, for example prod, uat, or test."
+        required: false
+        type: string
+        default: "prod"
+      project_name:
+        description: "Project name. Defaults to the repository name."
+        required: false
+        type: string
+        default: ""
+
+      bump:
+        description: "Version bump before deploy: major, minor, patch, or none."
+        required: false
+        type: string
+        default: "patch"
+      tag_prefix:
+        description: "Git tag prefix."
+        required: false
+        type: string
+        default: "v"
+      tag_major:
+        description: "Only calculate tags inside this major version."
+        required: false
+        type: string
+        default: ""
+
+      node_version:
+        description: "Node.js version. Leave empty to skip actions/setup-node."
+        required: false
+        type: string
+        default: "22"
+      working_directory:
+        description: "Directory where install/build commands run."
+        required: false
+        type: string
+        default: "."
+      install_command:
+        description: "Dependency installation command. Leave empty to skip."
+        required: false
+        type: string
+        default: "corepack enable && pnpm install --frozen-lockfile"
+      build_command:
+        description: "Build command for the current project."
+        required: true
+        type: string
+      build_path:
+        description: "Build output path, relative to working_directory unless absolute."
+        required: false
+        type: string
+        default: "dist"
+
+      server_path:
+        description: "Remote server path. Supports {project}, {env}, {version}, {version_number}."
+        required: false
+        type: string
+        default: ""
+      server_path_map:
+        description: "JSON object mapping env names to remote server paths. Values support placeholders."
+        required: false
+        type: string
+        default: "{}"
+      server_preview_url:
+        description: "Preview URL. Supports {project}, {env}, {version}, {version_number}."
+        required: false
+        type: string
+        default: ""
+      server_preview_url_map:
+        description: "JSON object mapping env names to preview URLs. Values support placeholders."
+        required: false
+        type: string
+        default: "{}"
+      server_clean_mode:
+        description: "Remote cleanup mode: artifact deletes only current artifact entries, mirror uses rsync --delete, none only overwrites."
+        required: false
+        type: string
+        default: "artifact"
+      server_command:
+        description: "Optional command executed on the server after upload."
+        required: false
+        type: string
+        default: ""
+      ssh_strict_host_key:
+        description: "Use strict SSH host key checking with SSH_KNOWN_HOSTS or ssh-keyscan."
+        required: false
+        type: boolean
+        default: false
+
+      weapp_project_path:
+        description: "Mini Program project path. Defaults to build_path."
+        required: false
+        type: string
+        default: ""
+      weapp_robot:
+        description: "WeChat Mini Program robot number."
+        required: false
+        type: number
+        default: 30
+      weapp_description:
+        description: "Mini Program upload description."
+        required: false
+        type: string
+        default: ""
+
+      notify_webhooks:
+        description: "JSON array of webhook targets. Prefer the NOTIFY_WEBHOOKS secret for real URLs."
+        required: false
+        type: string
+        default: ""
+      notify_when:
+        description: "Notification timing: success, failure, cancelled, or always."
+        required: false
+        type: string
+        default: "success"
+      notify_title:
+        description: "Notification title. Defaults to '<project> deploy <status>'."
+        required: false
+        type: string
+        default: ""
+      notify_fail_on_error:
+        description: "Fail the workflow when one or more webhook notifications fail."
+        required: false
+        type: boolean
+        default: false
+
+      report_enabled:
+        description: "Report deployment status to the built-in deployment registry API."
+        required: false
+        type: boolean
+        default: true
+      report_url:
+        description: "Deployment report API URL. Defaults to the legacy hard-coded endpoint."
+        required: false
+        type: string
+        default: "https://www.orz2.online/api/smart/v1/html/postCreateHtml"
+      report_envs:
+        description: "Comma-separated environments to report, or all."
+        required: false
+        type: string
+        default: "prod"
+      report_authorization:
+        description: "Deployment report Authorization header. Set with REPORT_AUTHORIZATION secret or this input."
+        required: false
+        type: string
+      report_brand:
+        description: "Deployment report brand header."
+        required: false
+        type: string
+        default: "page"
+      report_platform:
+        description: "Deployment report platform header."
+        required: false
+        type: string
+        default: "WEB"
+      report_content:
+        description: "JSON value written to payload.content."
+        required: false
+        type: string
+        default: "{}"
+      report_extra_payload:
+        description: "JSON object merged into the report payload."
+        required: false
+        type: string
+        default: "{}"
+      report_retries:
+        description: "Deployment report retry count."
+        required: false
+        type: number
+        default: 3
+      report_retry_interval:
+        description: "Seconds between deployment report retries."
+        required: false
+        type: number
+        default: 5
+      report_fail_on_error:
+        description: "Fail the workflow when deployment report fails."
+        required: false
+        type: boolean
+        default: false
+
+    secrets:
+      SSH_HOST:
+        required: false
+      SSH_PORT:
+        required: false
+      SSH_USERNAME:
+        required: false
+      SSH_KEY:
+        required: false
+      SSH_KNOWN_HOSTS:
+        required: false
+      SERVER_PATH:
+        required: false
+      WEAPP_APPID:
+        required: false
+      WEAPP_PRIVATE_KEY:
+        required: false
+      NOTIFY_WEBHOOKS:
+        required: false
+      REPORT_URL:
+        required: false
+      REPORT_AUTHORIZATION:
+        required: false
+
+    outputs:
+      version:
+        description: "Resolved tag, for example v1.2.3."
+        value: ${{ jobs.version.outputs.version }}
+      version_number:
+        description: "Resolved version without prefix, for example 1.2.3."
+        value: ${{ jobs.version.outputs.version_number }}
+      preview_url:
+        description: "Preview URL produced by this deploy."
+        value: ${{ jobs.build.outputs.preview_url }}
+      repository_path:
+        description: "Remote server path or Mini Program project path."
+        value: ${{ jobs.build.outputs.repository_path }}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-deploy-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      deploy_target: ${{ steps.validate.outputs.deploy_target }}
+      target_kind: ${{ steps.validate.outputs.target_kind }}
+      artifact_name: ${{ steps.validate.outputs.artifact_name }}
+
+    steps:
+      - name: Validate inputs
+        id: validate
+        shell: bash
+        env:
+          TARGET: ${{ inputs.target }}
+          BUILD_COMMAND: ${{ inputs.build_command }}
+          SERVER_CLEAN_MODE: ${{ inputs.server_clean_mode }}
+          SERVER_PATH_MAP: ${{ inputs.server_path_map }}
+          SERVER_PREVIEW_URL_MAP: ${{ inputs.server_preview_url_map }}
+          NOTIFY_WHEN: ${{ inputs.notify_when }}
+          REPORT_CONTENT: ${{ inputs.report_content }}
+          REPORT_EXTRA_PAYLOAD: ${{ inputs.report_extra_payload }}
+        run: |
+          set -euo pipefail
+
+          target_kind="$(printf '%s' "$TARGET" | tr '[:upper:]' '[:lower:]')"
+          case "$target_kind" in
+            server|web|api)
+              deploy_target="server"
+              ;;
+            weapp)
+              deploy_target="weapp"
+              ;;
+            *)
+              echo "::error::target must be one of: server, web, api, weapp"
+              exit 1
+              ;;
+          esac
+
+          if [ -z "$BUILD_COMMAND" ]; then
+            echo "::error::build_command is required"
+            exit 1
+          fi
+
+          case "$SERVER_CLEAN_MODE" in
+            artifact|mirror|none) ;;
+            *)
+              echo "::error::server_clean_mode must be one of: artifact, mirror, none"
+              exit 1
+              ;;
+          esac
+
+          case "$NOTIFY_WHEN" in
+            success|failure|cancelled|always) ;;
+            *)
+              echo "::error::notify_when must be one of: success, failure, cancelled, always"
+              exit 1
+              ;;
+          esac
+
+          validate_json_object() {
+            local name="$1"
+            local value="$2"
+            if ! jq -e 'type == "object"' >/dev/null 2>&1 <<< "$value"; then
+              echo "::error::$name must be a JSON object"
+              exit 1
+            fi
+          }
+
+          validate_json_value() {
+            local name="$1"
+            local value="$2"
+            if ! jq -e . >/dev/null 2>&1 <<< "$value"; then
+              echo "::error::$name must be valid JSON"
+              exit 1
+            fi
+          }
+
+          validate_json_object "server_path_map" "$SERVER_PATH_MAP"
+          validate_json_object "server_preview_url_map" "$SERVER_PREVIEW_URL_MAP"
+          validate_json_value "report_content" "$REPORT_CONTENT"
+          validate_json_object "report_extra_payload" "$REPORT_EXTRA_PAYLOAD"
+
+          artifact_name="release-output-${GITHUB_RUN_ID}"
+
+          {
+            echo "deploy_target=$deploy_target"
+            echo "target_kind=$target_kind"
+            echo "artifact_name=$artifact_name"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "::group::Inputs"
+          echo "target=$target_kind"
+          echo "deploy_target=$deploy_target"
+          echo "env=${{ inputs.env }}"
+          echo "project_name=${{ inputs.project_name || '<repo-name>' }}"
+          echo "working_directory=${{ inputs.working_directory }}"
+          echo "build_path=${{ inputs.build_path }}"
+          echo "bump=${{ inputs.bump }}"
+          echo "tag_prefix=${{ inputs.tag_prefix }}"
+          echo "tag_major=${{ inputs.tag_major || '<any>' }}"
+          echo "node_version=${{ inputs.node_version || '<skip setup-node>' }}"
+          echo "install_command=${{ inputs.install_command != '' && '<configured>' || '<skip>' }}"
+          echo "build_command=<configured>"
+          echo "server_path=${{ inputs.server_path != '' && '<configured>' || '<empty>' }}"
+          echo "server_path_map=${{ inputs.server_path_map != '{}' && '<configured>' || '<empty>' }}"
+          echo "server_preview_url=${{ inputs.server_preview_url || '<empty>' }}"
+          echo "server_preview_url_map=${{ inputs.server_preview_url_map != '{}' && '<configured>' || '<empty>' }}"
+          echo "server_clean_mode=$SERVER_CLEAN_MODE"
+          echo "server_command=${{ inputs.server_command != '' && '<configured>' || '<empty>' }}"
+          echo "weapp_project_path=${{ inputs.weapp_project_path || '<build_path>' }}"
+          echo "notify_webhooks=${{ inputs.notify_webhooks != '' && '<input>' || '<input empty>' }}"
+          echo "notify_when=$NOTIFY_WHEN"
+          echo "report_enabled=${{ inputs.report_enabled }}"
+          echo "report_envs=${{ inputs.report_envs }}"
+          echo "report_url=${{ (inputs.report_url != '' || secrets.REPORT_URL != '') && '<configured>' || '<empty>' }}"
+          echo "report_authorization=${{ (inputs.report_authorization != '' || secrets.REPORT_AUTHORIZATION != '') && '<configured>' || '<empty>' }}"
+          echo "report_fail_on_error=${{ inputs.report_fail_on_error }}"
+          echo "::endgroup::"
+
+  version:
+    needs: validate
+    uses: ./.github/workflows/release-version.yml
+    with:
+      bump: ${{ inputs.bump }}
+      prefix: ${{ inputs.tag_prefix }}
+      major: ${{ inputs.tag_major }}
+
+  build:
+    needs:
+      - validate
+      - version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      project_name: ${{ steps.context.outputs.project_name }}
+      repository_path: ${{ steps.context.outputs.repository_path }}
+      preview_url: ${{ steps.context.outputs.preview_url }}
+      local_path: ${{ steps.context.outputs.local_path }}
+      source_type: ${{ steps.package.outputs.source_type }}
+      file_count: ${{ steps.package.outputs.file_count }}
+      artifact_size: ${{ steps.package.outputs.artifact_size }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        if: inputs.node_version != ''
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node_version }}
+          package-manager-cache: false
+
+      - name: Resolve deployment context
+        id: context
+        shell: bash
+        env:
+          DEPLOY_TARGET: ${{ needs.validate.outputs.deploy_target }}
+          TARGET_KIND: ${{ needs.validate.outputs.target_kind }}
+          DEPLOY_ENV: ${{ inputs.env }}
+          PROJECT_NAME_INPUT: ${{ inputs.project_name }}
+          WORKING_DIRECTORY: ${{ inputs.working_directory }}
+          BUILD_PATH: ${{ inputs.build_path }}
+          SERVER_PATH_TEMPLATE: ${{ inputs.server_path }}
+          SERVER_PATH_MAP: ${{ inputs.server_path_map }}
+          SERVER_PATH_SECRET: ${{ secrets.SERVER_PATH }}
+          SERVER_PREVIEW_URL_TEMPLATE: ${{ inputs.server_preview_url }}
+          SERVER_PREVIEW_URL_MAP: ${{ inputs.server_preview_url_map }}
+          WEAPP_PROJECT_PATH: ${{ inputs.weapp_project_path }}
+          VERSION: ${{ needs.version.outputs.version }}
+          VERSION_NUMBER: ${{ needs.version.outputs.version_number }}
+        run: |
+          set -euo pipefail
+
+          repo_name="${GITHUB_REPOSITORY##*/}"
+          project_name="${PROJECT_NAME_INPUT:-$repo_name}"
+
+          render_template() {
+            local value="$1"
+            value="${value//\{project\}/$project_name}"
+            value="${value//\{env\}/$DEPLOY_ENV}"
+            value="${value//\{version\}/$VERSION}"
+            value="${value//\{version_number\}/$VERSION_NUMBER}"
+            printf '%s' "$value"
+          }
+
+          resolve_local_path() {
+            local path="$1"
+            if [[ "$path" = /* ]]; then
+              printf '%s' "$path"
+            else
+              printf '%s/%s/%s' "$GITHUB_WORKSPACE" "$WORKING_DIRECTORY" "$path"
+            fi
+          }
+
+          lookup_env_value() {
+            local map="$1"
+            local key="$2"
+            jq -r --arg key "$key" '.[$key] // empty' <<< "$map"
+          }
+
+          preview_template="$(lookup_env_value "$SERVER_PREVIEW_URL_MAP" "$DEPLOY_ENV")"
+          preview_template="${preview_template:-$SERVER_PREVIEW_URL_TEMPLATE}"
+          preview_url="$(render_template "$preview_template")"
+
+          if [ "$DEPLOY_TARGET" = "server" ]; then
+            server_path_template="$(lookup_env_value "$SERVER_PATH_MAP" "$DEPLOY_ENV")"
+            server_path_template="${server_path_template:-${SERVER_PATH_TEMPLATE:-$SERVER_PATH_SECRET}}"
+            if [ -z "$server_path_template" ]; then
+              echo "::error::server_path input, server_path_map[$DEPLOY_ENV], or SERVER_PATH secret is required for target=$TARGET_KIND"
+              exit 1
+            fi
+            repository_path="$(render_template "$server_path_template")"
+            local_path="$(resolve_local_path "$BUILD_PATH")"
+          else
+            weapp_path="${WEAPP_PROJECT_PATH:-$BUILD_PATH}"
+            repository_path="$weapp_path"
+            local_path="$(resolve_local_path "$weapp_path")"
+          fi
+
+          {
+            echo "project_name=$project_name"
+            echo "repository_path=$repository_path"
+            echo "local_path=$local_path"
+            echo "preview_url=$preview_url"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "::group::Deploy context"
+          echo "project_name=$project_name"
+          echo "target=$TARGET_KIND"
+          echo "deploy_target=$DEPLOY_TARGET"
+          echo "environment=$DEPLOY_ENV"
+          echo "local_path=$local_path"
+          echo "repository_path=$repository_path"
+          echo "preview_url=${preview_url:-<empty>}"
+          echo "::endgroup::"
+
+      - name: Install dependencies
+        if: inputs.install_command != ''
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          DEPLOY_ENV: ${{ inputs.env }}
+          PROJECT_NAME: ${{ steps.context.outputs.project_name }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_VERSION_NUMBER: ${{ needs.version.outputs.version_number }}
+        run: |
+          set -euo pipefail
+
+          echo "::group::Install"
+          echo "working_directory=$(pwd)"
+          echo "node=$(node --version 2>/dev/null || echo '<not available>')"
+          echo "npm=$(npm --version 2>/dev/null || echo '<not available>')"
+          echo "command=<configured>"
+          ${{ inputs.install_command }}
+          echo "Install completed."
+          echo "::endgroup::"
+
+      - name: Build project
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          DEPLOY_ENV: ${{ inputs.env }}
+          PROJECT_NAME: ${{ steps.context.outputs.project_name }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_VERSION_NUMBER: ${{ needs.version.outputs.version_number }}
+        run: |
+          set -euo pipefail
+
+          echo "::group::Build"
+          echo "working_directory=$(pwd)"
+          echo "command=<configured>"
+          echo "DEPLOY_ENV=$DEPLOY_ENV"
+          echo "PROJECT_NAME=$PROJECT_NAME"
+          echo "RELEASE_VERSION=$RELEASE_VERSION"
+          ${{ inputs.build_command }}
+          echo "Build completed."
+          echo "::endgroup::"
+
+      - name: Package build output
+        id: package
+        shell: bash
+        env:
+          LOCAL_PATH: ${{ steps.context.outputs.local_path }}
+          DEPLOY_TARGET: ${{ needs.validate.outputs.deploy_target }}
+          TARGET_KIND: ${{ needs.validate.outputs.target_kind }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -e "$LOCAL_PATH" ]; then
+            echo "::error::build output does not exist: $LOCAL_PATH"
+            exit 1
+          fi
+
+          if [ "$DEPLOY_TARGET" = "weapp" ] && [ ! -d "$LOCAL_PATH" ]; then
+            echo "::error::target=weapp requires a directory build output: $LOCAL_PATH"
+            exit 1
+          fi
+
+          artifact_root="$RUNNER_TEMP/release_artifact"
+          payload_dir="$RUNNER_TEMP/release_payload"
+          rm -rf "$artifact_root" "$payload_dir"
+          mkdir -p "$artifact_root" "$payload_dir"
+
+          if [ -d "$LOCAL_PATH" ]; then
+            source_type="directory"
+            file_count="$(find "$LOCAL_PATH" -type f | wc -l | tr -d ' ')"
+            artifact_size="$(du -sh "$LOCAL_PATH" | awk '{print $1}')"
+            tar -C "$LOCAL_PATH" -czf "$artifact_root/output.tgz" .
+          else
+            source_type="file"
+            file_count="1"
+            artifact_size="$(du -h "$LOCAL_PATH" | awk '{print $1}')"
+            cp "$LOCAL_PATH" "$payload_dir/$(basename "$LOCAL_PATH")"
+            tar -C "$payload_dir" -czf "$artifact_root/output.tgz" .
+          fi
+
+          jq -n \
+            --arg sourceType "$source_type" \
+            --arg localPath "$LOCAL_PATH" \
+            --arg target "$TARGET_KIND" \
+            --arg fileCount "$file_count" \
+            --arg artifactSize "$artifact_size" \
+            '{
+              sourceType: $sourceType,
+              localPath: $localPath,
+              target: $target,
+              fileCount: ($fileCount | tonumber),
+              artifactSize: $artifactSize
+            }' > "$artifact_root/metadata.json"
+
+          {
+            echo "source_type=$source_type"
+            echo "file_count=$file_count"
+            echo "artifact_size=$artifact_size"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "::group::Build output"
+          echo "local_path=$LOCAL_PATH"
+          echo "source_type=$source_type"
+          echo "file_count=$file_count"
+          echo "size=$artifact_size"
+          if [ -d "$LOCAL_PATH" ]; then
+            echo "top_level_entries:"
+            find "$LOCAL_PATH" -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | head -n 50
+          fi
+          echo "::endgroup::"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.validate.outputs.artifact_name }}
+          path: ${{ runner.temp }}/release_artifact
+          if-no-files-found: error
+          retention-days: 1
+
+  tag:
+    needs:
+      - version
+      - build
+    if: needs.version.outputs.should_tag == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout tags
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create git tag
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force
+
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::tag $VERSION already exists"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          echo "::group::Create tag"
+          echo "version=$VERSION"
+          echo "commit=$GITHUB_SHA"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "refs/tags/$VERSION"
+          echo "Tag pushed."
+          echo "::endgroup::"
+
+  deploy_server:
+    needs:
+      - validate
+      - version
+      - build
+      - tag
+    if: always() && needs.validate.outputs.deploy_target == 'server' && needs.build.result == 'success' && (needs.tag.result == 'success' || needs.tag.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.validate.outputs.artifact_name }}
+          path: ${{ runner.temp }}/release_artifact
+
+      - name: Deploy server artifact
+        shell: bash
+        env:
+          TARGET_KIND: ${{ needs.validate.outputs.target_kind }}
+          REMOTE_PATH: ${{ needs.build.outputs.repository_path }}
+          SERVER_CLEAN_MODE: ${{ inputs.server_clean_mode }}
+          SERVER_COMMAND: ${{ inputs.server_command }}
+          SSH_STRICT_HOST_KEY: ${{ inputs.ssh_strict_host_key }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USERNAME: ${{ secrets.SSH_USERNAME }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          DEPLOY_ENV: ${{ inputs.env }}
+          PROJECT_NAME: ${{ needs.build.outputs.project_name }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_VERSION_NUMBER: ${{ needs.version.outputs.version_number }}
+        run: |
+          set -euo pipefail
+
+          : "${SSH_HOST:?SSH_HOST secret is required}"
+          : "${SSH_USERNAME:?SSH_USERNAME secret is required}"
+          : "${SSH_KEY:?SSH_KEY secret is required}"
+          : "${REMOTE_PATH:?server_path is required}"
+
+          artifact_dir="$RUNNER_TEMP/release_artifact"
+          payload_dir="$RUNNER_TEMP/release_payload"
+          rm -rf "$payload_dir"
+          mkdir -p "$payload_dir"
+          tar -xzf "$artifact_dir/output.tgz" -C "$payload_dir"
+
+          SSH_PORT="${SSH_PORT:-22}"
+
+          echo "::group::Server deploy"
+          echo "target=$TARGET_KIND"
+          echo "environment=$DEPLOY_ENV"
+          echo "remote_path=$REMOTE_PATH"
+          echo "server_clean_mode=$SERVER_CLEAN_MODE"
+          echo "server_command=$([ -n "$SERVER_COMMAND" ] && echo '<configured>' || echo '<empty>')"
+          echo "artifact_file_count=$(find "$payload_dir" -type f | wc -l | tr -d ' ')"
+          echo "artifact_size=$(du -sh "$payload_dir" | awk '{print $1}')"
+          if [ "$TARGET_KIND" = "api" ] && [ -z "$SERVER_COMMAND" ]; then
+            echo "::warning::target=api usually needs server_command to install dependencies or restart the service."
+          fi
+
+          key_path="$RUNNER_TEMP/deploy_key"
+          printf '%s' "$SSH_KEY" | sed 's/\\n/\n/g' > "$key_path"
+          chmod 600 "$key_path"
+
+          mkdir -p "$HOME/.ssh"
+          ssh_options=(-i "$key_path" -p "$SSH_PORT" -o IdentitiesOnly=yes)
+          scp_options=(-i "$key_path" -P "$SSH_PORT" -o IdentitiesOnly=yes)
+          rsync_ssh_options="-i $key_path -p $SSH_PORT -o IdentitiesOnly=yes"
+
+          if [ "$SSH_STRICT_HOST_KEY" = "true" ]; then
+            known_hosts_path="$HOME/.ssh/known_hosts"
+            if [ -n "$SSH_KNOWN_HOSTS" ]; then
+              printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_hosts_path"
+            else
+              ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> "$known_hosts_path"
+            fi
+            chmod 600 "$known_hosts_path"
+            ssh_options+=(-o StrictHostKeyChecking=yes)
+            scp_options+=(-o StrictHostKeyChecking=yes)
+            rsync_ssh_options="$rsync_ssh_options -o StrictHostKeyChecking=yes"
+          else
+            ssh_options+=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+            scp_options+=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+            rsync_ssh_options="$rsync_ssh_options -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+          fi
+
+          remote="${SSH_USERNAME}@${SSH_HOST}"
+          remote_path_quoted="$(printf '%q' "$REMOTE_PATH")"
+          deploy_user_quoted="$(printf '%q' "$SSH_USERNAME")"
+
+          echo "Ensuring remote directory exists."
+          # shellcheck disable=SC2029
+          ssh "${ssh_options[@]}" "$remote" "mkdir -p $remote_path_quoted"
+
+          if ! command -v rsync >/dev/null 2>&1; then
+            echo "::error::rsync is required on the GitHub runner for server deploys, but it is not available."
+            exit 1
+          fi
+
+          if ! ssh "${ssh_options[@]}" "$remote" "command -v rsync >/dev/null 2>&1"; then
+            echo "::error::rsync is required on the remote server for target=$TARGET_KIND deployments."
+            echo "::error::Install rsync on the server, or rerun scripts/configure-deploy-permissions.sh as root to install required deploy prerequisites."
+            exit 1
+          fi
+
+          if [ "$SERVER_CLEAN_MODE" = "artifact" ]; then
+            delete_list="$RUNNER_TEMP/server_delete_entries"
+            while IFS= read -r -d '' entry; do
+              case "$entry" in
+                .git|.github|node_modules|.env*) continue ;;
+              esac
+              printf '%s\0' "$entry"
+            done < <(find "$payload_dir" -maxdepth 1 -mindepth 1 -printf '%f\0') > "$delete_list"
+
+            delete_count="$(tr -cd '\0' < "$delete_list" | wc -c | tr -d ' ')"
+            echo "artifact_delete_entry_count=$delete_count"
+
+            if [ "$delete_count" -gt 0 ]; then
+              remote_delete_list="$(ssh "${ssh_options[@]}" "$remote" "mktemp")"
+              scp "${scp_options[@]}" "$delete_list" "$remote:$remote_delete_list"
+              remote_delete_list_quoted="$(printf '%q' "$remote_delete_list")"
+
+              # shellcheck disable=SC2029
+              ssh "${ssh_options[@]}" "$remote" \
+                "DEPLOY_PATH=$remote_path_quoted DELETE_LIST=$remote_delete_list_quoted DEPLOY_USER=$deploy_user_quoted bash -se" <<'REMOTE_CLEAN'
+          set -euo pipefail
+          trap 'rm -f "$DELETE_LIST"' EXIT
+          cd "$DEPLOY_PATH"
+          if [ ! -w . ]; then
+            echo "::error::deploy user '$DEPLOY_USER' cannot write remote directory: $DEPLOY_PATH"
+            echo "::error::Fix remote ownership or permissions before rerunning, for example: sudo chown -R $DEPLOY_USER $DEPLOY_PATH"
+            exit 1
+          fi
+
+          count=0
+          while IFS= read -r -d '' entry; do
+            [ -n "$entry" ] || continue
+            case "$entry" in
+              .|..|*/*)
+                echo "::error::unsafe artifact entry: $entry"
+                exit 1
+                ;;
+            esac
+            if ! rm -rf -- "$entry"; then
+              echo "::error::failed to remove artifact entry '$entry' in $DEPLOY_PATH"
+              echo "::error::Fix ownership or write permissions for this path, then rerun the deployment."
+              exit 1
+            fi
+            count=$((count + 1))
+          done < "$DELETE_LIST"
+          echo "removed_artifact_entries=$count"
+          REMOTE_CLEAN
+            fi
+          fi
+
+          rsync_args=(-azs --exclude .git/ --exclude .github/ --exclude node_modules/ --exclude '.env*')
+          if [ "$SERVER_CLEAN_MODE" = "mirror" ]; then
+            rsync_args+=(--delete)
+          fi
+
+          if ! rsync "${rsync_args[@]}" \
+            -e "ssh $rsync_ssh_options" \
+            "$payload_dir"/ \
+            "${remote}:${REMOTE_PATH%/}/"; then
+            echo "::error::rsync upload failed. Check that deploy user '$SSH_USERNAME' can write to $REMOTE_PATH and replace deployed files."
+            exit 1
+          fi
+          echo "Upload completed."
+
+          if [ -n "$SERVER_COMMAND" ]; then
+            echo "Running server_command."
+            command_b64="$(printf '%s' "$SERVER_COMMAND" | base64 -w 0)"
+            deploy_env_quoted="$(printf '%q' "$DEPLOY_ENV")"
+            project_name_quoted="$(printf '%q' "$PROJECT_NAME")"
+            version_quoted="$(printf '%q' "$RELEASE_VERSION")"
+            version_number_quoted="$(printf '%q' "$RELEASE_VERSION_NUMBER")"
+
+            # shellcheck disable=SC2029
+            ssh "${ssh_options[@]}" "$remote" \
+              "DEPLOY_PATH=$remote_path_quoted DEPLOY_ENV=$deploy_env_quoted PROJECT_NAME=$project_name_quoted RELEASE_VERSION=$version_quoted RELEASE_VERSION_NUMBER=$version_number_quoted SERVER_COMMAND_B64=$command_b64 bash -se" <<'REMOTE_COMMAND'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+          command_file="$(mktemp)"
+          printf '%s' "$SERVER_COMMAND_B64" | base64 -d > "$command_file"
+          bash "$command_file"
+          rm -f "$command_file"
+          REMOTE_COMMAND
+            echo "server_command completed."
+          fi
+
+          echo "::endgroup::"
+
+  deploy_weapp:
+    needs:
+      - validate
+      - version
+      - build
+      - tag
+    if: always() && needs.validate.outputs.deploy_target == 'weapp' && needs.build.result == 'success' && (needs.tag.result == 'success' || needs.tag.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Setup Node
+        if: inputs.node_version != ''
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node_version }}
+          package-manager-cache: false
+
+      - name: Download release artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.validate.outputs.artifact_name }}
+          path: ${{ runner.temp }}/release_artifact
+
+      - name: Upload WeChat Mini Program
+        shell: bash
+        env:
+          WEAPP_APPID: ${{ secrets.WEAPP_APPID }}
+          WEAPP_PRIVATE_KEY: ${{ secrets.WEAPP_PRIVATE_KEY }}
+          WEAPP_ROBOT: ${{ inputs.weapp_robot }}
+          WEAPP_DESCRIPTION: ${{ inputs.weapp_description }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_VERSION_NUMBER: ${{ needs.version.outputs.version_number }}
+          GIT_SHA: ${{ github.sha }}
+          GIT_REF_NAME: ${{ github.ref_name }}
+          GIT_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+
+          : "${WEAPP_APPID:?WEAPP_APPID secret is required}"
+          : "${WEAPP_PRIVATE_KEY:?WEAPP_PRIVATE_KEY secret is required}"
+
+          artifact_dir="$RUNNER_TEMP/release_artifact"
+          project_path="$RUNNER_TEMP/weapp_project"
+          rm -rf "$project_path"
+          mkdir -p "$project_path"
+          tar -xzf "$artifact_dir/output.tgz" -C "$project_path"
+
+          echo "::group::WeChat Mini Program"
+          echo "project_path=$project_path"
+          echo "robot=$WEAPP_ROBOT"
+          echo "version=$RELEASE_VERSION_NUMBER"
+          echo "description=$([ -n "$WEAPP_DESCRIPTION" ] && echo '<configured>' || echo '<auto>')"
+          echo "file_count=$(find "$project_path" -type f | wc -l | tr -d ' ')"
+          echo "size=$(du -sh "$project_path" | awk '{print $1}')"
+
+          private_key_path="$RUNNER_TEMP/weapp_private.key"
+          printf '%s' "$WEAPP_PRIVATE_KEY" | sed 's/\\n/\n/g' > "$private_key_path"
+          chmod 600 "$private_key_path"
+
+          config_path="$project_path/project.config.json"
+          if [ -f "$config_path" ]; then
+            echo "Updating project.config.json appid."
+            tmp_config="$(mktemp)"
+            jq --arg appid "$WEAPP_APPID" '.appid = $appid' "$config_path" > "$tmp_config"
+            mv "$tmp_config" "$config_path"
+          else
+            echo "::warning::project.config.json not found at $config_path"
+          fi
+
+          description="$WEAPP_DESCRIPTION"
+          if [ -z "$description" ]; then
+            description="Commit: $GIT_SHA | Branch: $GIT_REF_NAME | Actor: $GIT_ACTOR"
+          fi
+
+          npx --yes miniprogram-ci upload \
+            --appid "$WEAPP_APPID" \
+            --project-path "$project_path" \
+            --private-key-path "$private_key_path" \
+            --project-type miniProgram \
+            --threads 0 \
+            --use-cos false \
+            --robot "$WEAPP_ROBOT" \
+            --upload-version "$RELEASE_VERSION_NUMBER" \
+            --upload-description "$description"
+          echo "WeChat Mini Program upload completed."
+          echo "::endgroup::"
+
+  report:
+    needs:
+      - validate
+      - version
+      - build
+      - deploy_server
+      - deploy_weapp
+    if: always() && inputs.report_enabled && (needs.deploy_server.result == 'success' || needs.deploy_weapp.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Report deployment status
+        shell: bash
+        env:
+          REPORT_URL_VALUE: ${{ secrets.REPORT_URL != '' && secrets.REPORT_URL || inputs.report_url }}
+          REPORT_AUTHORIZATION_VALUE: ${{ secrets.REPORT_AUTHORIZATION != '' && secrets.REPORT_AUTHORIZATION || inputs.report_authorization }}
+          REPORT_ENVS: ${{ inputs.report_envs }}
+          REPORT_BRAND: ${{ inputs.report_brand }}
+          REPORT_PLATFORM: ${{ inputs.report_platform }}
+          REPORT_CONTENT: ${{ inputs.report_content }}
+          REPORT_EXTRA_PAYLOAD: ${{ inputs.report_extra_payload }}
+          REPORT_RETRIES: ${{ inputs.report_retries }}
+          REPORT_RETRY_INTERVAL: ${{ inputs.report_retry_interval }}
+          REPORT_FAIL_ON_ERROR: ${{ inputs.report_fail_on_error }}
+          TARGET_KIND: ${{ needs.validate.outputs.target_kind }}
+          DEPLOY_TARGET: ${{ needs.validate.outputs.deploy_target }}
+          DEPLOY_ENV: ${{ inputs.env }}
+          PROJECT_NAME: ${{ needs.build.outputs.project_name }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_VERSION_NUMBER: ${{ needs.version.outputs.version_number }}
+          PREVIEW_URL: ${{ needs.build.outputs.preview_url }}
+          REPOSITORY_PATH: ${{ needs.build.outputs.repository_path }}
+        run: |
+          set -euo pipefail
+
+          should_report="false"
+          report_envs_normalized="$(printf '%s' "$REPORT_ENVS" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+          deploy_env_normalized="$(printf '%s' "$DEPLOY_ENV" | tr '[:upper:]' '[:lower:]')"
+
+          IFS=',' read -r -a report_envs <<< "$report_envs_normalized"
+          for report_env in "${report_envs[@]}"; do
+            if [ "$report_env" = "all" ] || [ "$report_env" = "$deploy_env_normalized" ]; then
+              should_report="true"
+              break
+            fi
+          done
+
+          if [ "$should_report" != "true" ]; then
+            echo "Skip deployment report because env=$DEPLOY_ENV is not in report_envs=$REPORT_ENVS."
+            exit 0
+          fi
+
+          if [ -z "$REPORT_URL_VALUE" ]; then
+            echo "::warning::Deployment report is enabled but report URL is empty."
+            exit 0
+          fi
+
+          if [ -z "$REPORT_AUTHORIZATION_VALUE" ]; then
+            echo "::warning::Deployment report is enabled but report authorization is empty. Set REPORT_AUTHORIZATION secret or report_authorization input."
+            exit 0
+          fi
+
+          repo_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          run_url="${repo_url}/actions/runs/${GITHUB_RUN_ID}"
+
+          payload="$(
+            jq -n \
+              --arg projectName "$PROJECT_NAME" \
+              --arg version "$RELEASE_VERSION" \
+              --arg versionNumber "$RELEASE_VERSION_NUMBER" \
+              --arg environment "$DEPLOY_ENV" \
+              --arg target "$TARGET_KIND" \
+              --arg deployTarget "$DEPLOY_TARGET" \
+              --arg repositoryUrl "$repo_url" \
+              --arg previewUrl "$PREVIEW_URL" \
+              --arg repositoryPath "$REPOSITORY_PATH" \
+              --arg ref "$GITHUB_REF" \
+              --arg refName "$GITHUB_REF_NAME" \
+              --arg sha "$GITHUB_SHA" \
+              --arg actor "$GITHUB_ACTOR" \
+              --arg runId "$GITHUB_RUN_ID" \
+              --arg runUrl "$run_url" \
+              --argjson content "$REPORT_CONTENT" \
+              --argjson extra "$REPORT_EXTRA_PAYLOAD" \
+              '{
+                projectName: $projectName,
+                version: $version,
+                versionNumber: $versionNumber,
+                environment: $environment,
+                target: $target,
+                deployTarget: $deployTarget,
+                repositoryUrl: $repositoryUrl,
+                previewUrl: $previewUrl,
+                repositoryPath: $repositoryPath,
+                ref: $ref,
+                refName: $refName,
+                sha: $sha,
+                actor: $actor,
+                runId: $runId,
+                runUrl: $runUrl,
+                content: $content
+              } * $extra'
+          )"
+
+          echo "::group::Deployment report"
+          echo "report_url=<configured>"
+          echo "report_envs=$REPORT_ENVS"
+          echo "project_name=$PROJECT_NAME"
+          echo "version=$RELEASE_VERSION"
+          echo "environment=$DEPLOY_ENV"
+          echo "target=$TARGET_KIND"
+          echo "preview_url=${PREVIEW_URL:-<empty>}"
+          echo "max_retries=$REPORT_RETRIES"
+
+          attempt=1
+          report_failed="true"
+          while [ "$attempt" -le "$REPORT_RETRIES" ]; do
+            response_file="$RUNNER_TEMP/deployment_report_response.txt"
+            echo "Sending deployment report attempt=$attempt."
+            http_status="$(curl -sS -o "$response_file" -w '%{http_code}' \
+              -H 'Content-Type: application/json' \
+              -H "authorization: $REPORT_AUTHORIZATION_VALUE" \
+              -H "brand: $REPORT_BRAND" \
+              -H "platform: $REPORT_PLATFORM" \
+              --data "$payload" \
+              "$REPORT_URL_VALUE" || true)"
+
+            echo "Deployment report status=$http_status."
+            if [[ "$http_status" =~ ^2 ]]; then
+              echo "Deployment report sent."
+              report_failed="false"
+              break
+            fi
+
+            response_preview="$(head -c 500 "$response_file" || true)"
+            if [ -n "$response_preview" ]; then
+              echo "$response_preview"
+            fi
+
+            if [ "$attempt" -lt "$REPORT_RETRIES" ]; then
+              echo "Retry after ${REPORT_RETRY_INTERVAL}s."
+              sleep "$REPORT_RETRY_INTERVAL"
+            fi
+            attempt=$((attempt + 1))
+          done
+
+          echo "::endgroup::"
+
+          if [ "$report_failed" = "true" ]; then
+            message="Deployment report failed after $REPORT_RETRIES attempt(s)."
+            if [ "$REPORT_FAIL_ON_ERROR" = "true" ]; then
+              echo "::error::$message"
+              exit 1
+            fi
+            echo "::warning::$message"
+          fi
+
+  notify:
+    needs:
+      - validate
+      - version
+      - build
+      - tag
+      - deploy_server
+      - deploy_weapp
+      - report
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Notify webhooks
+        shell: bash
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+          NOTIFY_WEBHOOKS_VALUE: ${{ inputs.notify_webhooks != '' && inputs.notify_webhooks || secrets.NOTIFY_WEBHOOKS }}
+          NOTIFY_WHEN: ${{ inputs.notify_when }}
+          NOTIFY_TITLE: ${{ inputs.notify_title }}
+          NOTIFY_FAIL_ON_ERROR: ${{ inputs.notify_fail_on_error }}
+          TARGET_KIND: ${{ needs.validate.outputs.target_kind }}
+          DEPLOY_ENV: ${{ inputs.env }}
+          PROJECT_NAME: ${{ needs.build.outputs.project_name }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_VERSION_NUMBER: ${{ needs.version.outputs.version_number }}
+          PREVIEW_URL: ${{ needs.build.outputs.preview_url }}
+          REPOSITORY_PATH: ${{ needs.build.outputs.repository_path }}
+        run: |
+          set -euo pipefail
+
+          overall_status="success"
+          if jq -e 'to_entries[] | select(.value.result == "failure")' >/dev/null <<< "$NEEDS_JSON"; then
+            overall_status="failure"
+          elif jq -e 'to_entries[] | select(.value.result == "cancelled")' >/dev/null <<< "$NEEDS_JSON"; then
+            overall_status="cancelled"
+          fi
+
+          if [ "$NOTIFY_WHEN" != "always" ] && [ "$NOTIFY_WHEN" != "$overall_status" ]; then
+            echo "Skip notification because deploy status is $overall_status and notify_when is $NOTIFY_WHEN."
+            exit 0
+          fi
+
+          if [ -z "$NOTIFY_WEBHOOKS_VALUE" ]; then
+            echo "No webhook notification configured."
+            exit 0
+          fi
+
+          webhooks_file="$RUNNER_TEMP/notify_webhooks.json"
+          printf '%s' "$NOTIFY_WEBHOOKS_VALUE" > "$webhooks_file"
+
+          if ! jq -e 'type == "array"' "$webhooks_file" >/dev/null; then
+            echo "::error::notify_webhooks must be a JSON array"
+            exit 1
+          fi
+
+          normalize_type() {
+            local raw_type="$1"
+            local url="$2"
+            local type
+            type="$(printf '%s' "$raw_type" | tr '[:upper:]_' '[:lower:]-')"
+
+            if [ -z "$type" ]; then
+              case "$url" in
+                *qyapi.weixin.qq.com*) type="qywx" ;;
+                *open.feishu.cn*|*open.larksuite.com*) type="feishu" ;;
+                *oapi.dingtalk.com*) type="dingtalk" ;;
+                *hooks.slack.com*) type="slack" ;;
+              esac
+            fi
+
+            case "$type" in
+              qywx|wecom|wechat-work|work-wechat|wechatwork) printf '%s' "qywx" ;;
+              feishu|lark) printf '%s' "feishu" ;;
+              dingtalk|dingding) printf '%s' "dingtalk" ;;
+              slack) printf '%s' "slack" ;;
+              *) printf '%s' "" ;;
+            esac
+          }
+
+          build_payload() {
+            local channel="$1"
+            local title="$2"
+            local plain="$3"
+            local markdown="$4"
+
+            case "$channel" in
+              qywx)
+                jq -n --arg content "$markdown" '{msgtype:"markdown", markdown:{content:$content}}'
+                ;;
+              feishu)
+                jq -n --arg text "$plain" '{msg_type:"text", content:{text:$text}}'
+                ;;
+              dingtalk)
+                jq -n --arg title "$title" --arg text "$markdown" '{msgtype:"markdown", markdown:{title:$title, text:$text}, at:{isAtAll:false}}'
+                ;;
+              slack)
+                jq -n --arg text "$plain" '{text:$text}'
+                ;;
+            esac
+          }
+
+          timestamp="$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S %Z')"
+          project="${PROJECT_NAME:-${GITHUB_REPOSITORY##*/}}"
+          version="${RELEASE_VERSION:-unknown}"
+          title="$NOTIFY_TITLE"
+          if [ -z "$title" ]; then
+            title="$project deploy $overall_status"
+          fi
+
+          repo_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          run_url="${repo_url}/actions/runs/${GITHUB_RUN_ID}"
+
+          plain_message="$(cat <<MESSAGE
+          $title
+          Status: $overall_status
+          Project: $project
+          Environment: $DEPLOY_ENV
+          Target: $TARGET_KIND
+          Version: $version
+          Branch: $GITHUB_REF_NAME
+          Commit: $GITHUB_SHA
+          Actor: $GITHUB_ACTOR
+          Repository path: $REPOSITORY_PATH
+          Preview URL: $PREVIEW_URL
+          Run: $run_url
+          Time: $timestamp
+          MESSAGE
+          )"
+
+          markdown_message="$(cat <<MESSAGE
+          **$title**
+
+          - Status: $overall_status
+          - Project: $project
+          - Environment: $DEPLOY_ENV
+          - Target: $TARGET_KIND
+          - Version: $version
+          - Branch: $GITHUB_REF_NAME
+          - Commit: $GITHUB_SHA
+          - Actor: $GITHUB_ACTOR
+          - Repository path: $REPOSITORY_PATH
+          - Preview URL: $PREVIEW_URL
+          - Run: $run_url
+          - Time: $timestamp
+          MESSAGE
+          )"
+
+          count="$(jq 'length' "$webhooks_file")"
+          failures=0
+
+          echo "::group::Notify"
+          echo "deploy_status=$overall_status"
+          echo "notify_when=$NOTIFY_WHEN"
+          echo "webhook_count=$count"
+
+          for ((index = 0; index < count; index++)); do
+            raw_type="$(jq -r --argjson index "$index" '.[$index] | if type == "object" then (.type // .channel // "") else "" end' "$webhooks_file")"
+            url="$(jq -r --argjson index "$index" '.[$index] | if type == "string" then . elif type == "object" then (.url // .webhook // "") else "" end' "$webhooks_file")"
+            channel="$(normalize_type "$raw_type" "$url")"
+
+            if [ -z "$url" ] || [ "$url" = "null" ]; then
+              echo "::error::notify_webhooks[$index] is missing url/webhook"
+              failures=$((failures + 1))
+              continue
+            fi
+
+            if [ -z "$channel" ]; then
+              echo "::error::notify_webhooks[$index] has unsupported or unknown type"
+              failures=$((failures + 1))
+              continue
+            fi
+
+            payload="$(build_payload "$channel" "$title" "$plain_message" "$markdown_message")"
+            response_file="$RUNNER_TEMP/notify_${index}.txt"
+            http_status="$(curl -sS -o "$response_file" -w '%{http_code}' \
+              -H 'Content-Type: application/json' \
+              -X POST \
+              --data "$payload" \
+              "$url" || true)"
+
+            if [[ "$http_status" =~ ^2 ]]; then
+              echo "Webhook sent: index=$index channel=$channel status=$http_status"
+            else
+              echo "::error::webhook failed: index=$index channel=$channel status=$http_status"
+              response_preview="$(head -c 500 "$response_file" || true)"
+              if [ -n "$response_preview" ]; then
+                echo "$response_preview"
+              fi
+              failures=$((failures + 1))
+            fi
+          done
+
+          echo "notification_failures=$failures"
+          echo "::endgroup::"
+
+          if [ "$failures" -gt 0 ] && [ "$NOTIFY_FAIL_ON_ERROR" = "true" ]; then
+            exit 1
+          fi
+
+  summary:
+    needs:
+      - validate
+      - version
+      - build
+      - tag
+      - deploy_server
+      - deploy_weapp
+      - report
+      - notify
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Deployment summary
+        shell: bash
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+          TARGET_KIND: ${{ needs.validate.outputs.target_kind }}
+          DEPLOY_ENV: ${{ inputs.env }}
+          PROJECT_NAME: ${{ needs.build.outputs.project_name }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_VERSION_NUMBER: ${{ needs.version.outputs.version_number }}
+          LATEST_TAG: ${{ needs.version.outputs.latest_tag }}
+          REPOSITORY_PATH: ${{ needs.build.outputs.repository_path }}
+          PREVIEW_URL: ${{ needs.build.outputs.preview_url }}
+          SERVER_CLEAN_MODE: ${{ inputs.server_clean_mode }}
+          SOURCE_TYPE: ${{ needs.build.outputs.source_type }}
+          FILE_COUNT: ${{ needs.build.outputs.file_count }}
+          ARTIFACT_SIZE: ${{ needs.build.outputs.artifact_size }}
+        run: |
+          set -euo pipefail
+
+          overall_status="success"
+          if jq -e 'to_entries[] | select(.value.result == "failure")' >/dev/null <<< "$NEEDS_JSON"; then
+            overall_status="failure"
+          elif jq -e 'to_entries[] | select(.value.result == "cancelled")' >/dev/null <<< "$NEEDS_JSON"; then
+            overall_status="cancelled"
+          fi
+
+          tag_created="false"
+          if jq -e '.tag.result == "success"' >/dev/null <<< "$NEEDS_JSON"; then
+            tag_created="true"
+          fi
+
+          deploy_result="$(jq -r '.deploy_server.result as $server | .deploy_weapp.result as $weapp | if $server == "success" then $server elif $weapp == "success" then $weapp elif $server != "skipped" then $server else $weapp end' <<< "$NEEDS_JSON")"
+          report_result="$(jq -r '.report.result // "skipped"' <<< "$NEEDS_JSON")"
+          notify_result="$(jq -r '.notify.result // "skipped"' <<< "$NEEDS_JSON")"
+
+          {
+            echo "### Deployment Summary"
+            echo ""
+            echo "- Status: $overall_status"
+            echo "- Target: ${TARGET_KIND:-${{ inputs.target }}}"
+            echo "- Environment: $DEPLOY_ENV"
+            echo "- Project: ${PROJECT_NAME:-${GITHUB_REPOSITORY##*/}}"
+            echo "- Version: ${RELEASE_VERSION:-<unresolved>}"
+            echo "- Version number: ${RELEASE_VERSION_NUMBER:-<unresolved>}"
+            echo "- Previous tag: ${LATEST_TAG:-<none>}"
+            echo "- Tag created: $tag_created"
+            echo "- Repository path: ${REPOSITORY_PATH:-<empty>}"
+            echo "- Preview URL: ${PREVIEW_URL:-<empty>}"
+            echo "- Build output: ${SOURCE_TYPE:-<unknown>}, files=${FILE_COUNT:-0}, size=${ARTIFACT_SIZE:-<unknown>}"
+            echo "- Server clean mode: $SERVER_CLEAN_MODE"
+            echo "- Deploy job: $deploy_result"
+            echo "- Report job: $report_result"
+            echo "- Notify job: $notify_result"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::group::Summary"
+          echo "status=$overall_status"
+          echo "target=${TARGET_KIND:-${{ inputs.target }}}"
+          echo "environment=$DEPLOY_ENV"
+          echo "version=${RELEASE_VERSION:-<unresolved>}"
+          echo "repository_path=${REPOSITORY_PATH:-<empty>}"
+          echo "deploy_job=$deploy_result"
+          echo "report_job=$report_result"
+          echo "notify_job=$notify_result"
+          echo "::endgroup::"
