@@ -22,7 +22,7 @@ export function renderBuildInfoScript(
       console.log('Build time:', info.build.time)
       console.log('Build user:', info.build.user || '')
       console.log('Branch:', info.git.branch || '')
-      console.log('Tag:', info.git.tag || info.git.nearestTag || '')
+      console.log('Tag:', info.tagVersion || info.git.tag || info.git.nearestTag || '')
       console.log('Commit:', info.git.shortCommit, info.git.commit)
       console.log('CI:', info.ci && info.ci.jobUrl ? info.ci.jobUrl : '')
       console.table(info.git.latestCommits || [])

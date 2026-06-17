@@ -1,5 +1,5 @@
 export interface BuildInfo {
-  schemaVersion: string
+  tagVersion: string
 
   app: {
     name: string

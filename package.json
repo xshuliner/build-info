@@ -1,6 +1,6 @@
 {
   "name": "@xshuliner/build-info",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Generate build, deploy, Git and CI information for frontend applications.",
   "type": "module",
   "sideEffects": false,

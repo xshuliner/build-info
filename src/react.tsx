@@ -91,7 +91,7 @@ function Details({ info }: { info: BuildInfo }): React.ReactElement {
       <InfoRow label="Version" value={info.app.version} />
       <InfoRow label="Env" value={info.app.env} />
       <InfoRow label="Branch" value={info.git.branch} />
-      <InfoRow label="Tag" value={info.git.tag || info.git.nearestTag} />
+      <InfoRow label="Tag" value={info.tagVersion || info.git.tag || info.git.nearestTag} />
       <InfoRow label="Commit" value={info.git.commit} />
       <InfoRow label="Build time" value={info.build.time} />
       <InfoRow label="Build user" value={info.build.user} />

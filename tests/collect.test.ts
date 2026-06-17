@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,6 +21,7 @@ describe('collectBuildInfo', () => {
     const info = collectBuildInfo({ cwd })
 
     expect(info.app.name).toBe('unknown-app')
+    expect(info.tagVersion).toBe('')
     expect(info.git.commit).toBe('')
     expect(info.git.latestCommits).toEqual([])
     expect(info.runtime?.publicPath).toBe('/')
@@ -38,10 +40,33 @@ describe('collectBuildInfo', () => {
     expect(info.app.version).toBe('2.0.0')
     expect(info.app.env).toBe('production')
   })
+
+  it('uses the latest reachable Git tag as tagVersion', () => {
+    const cwd = createTempDir()
+    runGit(cwd, 'git -c init.defaultBranch=main init')
+    runGit(cwd, 'git config user.name "Test User"')
+    runGit(cwd, 'git config user.email "test@example.com"')
+    writeFileSync(join(cwd, 'file.txt'), 'first')
+    runGit(cwd, 'git add file.txt')
+    runGit(cwd, 'git commit -m "first"')
+    runGit(cwd, 'git tag v1.2.3')
+    writeFileSync(join(cwd, 'file.txt'), 'second')
+    runGit(cwd, 'git add file.txt')
+    runGit(cwd, 'git commit -m "second"')
+
+    const info = collectBuildInfo({ cwd })
+
+    expect(info.tagVersion).toBe('v1.2.3')
+    expect(info.git.nearestTag).toBe('v1.2.3')
+  })
 })
 
 function createTempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'xbi-'))
   tempDirs.push(dir)
   return dir
+}
+
+function runGit(cwd: string, command: string): void {
+  execSync(command, { cwd, stdio: 'ignore' })
 }

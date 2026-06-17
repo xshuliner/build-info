@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import type { BuildInfo, GenerateBuildInfoOptions } from '../types'
 import { safeExec } from '../utils/command'
 import { readPackageJson } from '../utils/package'
-import { SCHEMA_VERSION } from '../constants'
 import { collectCiInfo } from './ci'
 import { pickEnv } from './env'
 import { collectGitInfo } from './git'
@@ -23,7 +22,7 @@ export function collectBuildInfo(options: GenerateBuildInfoOptions = {}): BuildI
   const releaseId = options.releaseId || pickEnv(['XSHULINER_RELEASE_ID']) || `${git.shortCommit}-${timestamp}`
 
   const info: BuildInfo = {
-    schemaVersion: SCHEMA_VERSION,
+    tagVersion: git.tag || git.nearestTag || '',
     app: {
       name: appName,
       version: appVersion,

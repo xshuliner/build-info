@@ -16,7 +16,7 @@ describe('renderBuildInfoScript', () => {
 
 function sampleInfo(): BuildInfo {
   return {
-    schemaVersion: '1.0.0',
+    tagVersion: 'v1.0.0',
     app: {
       name: '</script><script>alert(1)</script>',
       version: '1.0.0',
