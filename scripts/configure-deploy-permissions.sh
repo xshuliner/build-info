@@ -18,7 +18,8 @@ INSTALL_RSYNC="${INSTALL_RSYNC:-true}"
 
 DEFAULT_DEPLOY_PATHS=(
   "/var/www/orz2.online/html"
-  "/opt/projectApi"
+  "/opt/projectApi/prod/smart-express"
+  "/opt/projectApi/uat/smart-express"
 )
 
 log() {
