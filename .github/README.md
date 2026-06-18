@@ -30,6 +30,7 @@
 | `NPM_TOKEN` | 否 | 仅在 `Release Package` 勾选 `publish_to_npm` 时需要，用于发布 `@xshuliner/build-info`。 |
 
 如果未来直接使用 `release-deploy.yml` 做服务器部署，还需要按目标配置 `SSH_HOST`、`SSH_USERNAME`、`SSH_KEY`、`SERVER_PATH` 或 `server_path`/`server_path_map`。
+API 项目需要 `pnpm`/PM2 时，可用 `INSTALL_PM2=true sudo -E bash scripts/configure-deploy-permissions.sh` 同时准备部署用户可用的 `pnpm` 和 PM2。
 
 ## 部署入口
 

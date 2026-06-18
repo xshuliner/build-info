@@ -8,6 +8,8 @@ set -euo pipefail
 #   DEPLOY_PATHS=$'/path/one\n/path/two' sudo -E bash scripts/configure-deploy-permissions.sh
 #   DEPLOY_PATHS_FILE=/etc/deploy-paths sudo -E bash scripts/configure-deploy-permissions.sh
 #   INSTALL_RSYNC=false sudo -E bash scripts/configure-deploy-permissions.sh
+#   INSTALL_PM2=true sudo -E bash scripts/configure-deploy-permissions.sh
+#   INSTALL_PNPM=true PNPM_VERSION=10.14.0 sudo -E bash scripts/configure-deploy-permissions.sh
 
 DEPLOY_USER="${DEPLOY_USER:-deploy}"
 DEPLOY_GROUP="${DEPLOY_GROUP:-$DEPLOY_USER}"
@@ -15,6 +17,11 @@ DEPLOY_SHELL="${DEPLOY_SHELL:-/bin/bash}"
 DEPLOY_PATHS_FILE="${DEPLOY_PATHS_FILE:-}"
 ENABLE_ACL="${ENABLE_ACL:-true}"
 INSTALL_RSYNC="${INSTALL_RSYNC:-true}"
+INSTALL_PM2="${INSTALL_PM2:-false}"
+INSTALL_PNPM="${INSTALL_PNPM:-$INSTALL_PM2}"
+PNPM_VERSION="${PNPM_VERSION:-10.14.0}"
+PM2_VERSION="${PM2_VERSION:-latest}"
+SYSTEM_NODE_ROOT="${SYSTEM_NODE_ROOT:-/opt/xshuliner-node}"
 
 DEFAULT_DEPLOY_PATHS=(
   "/var/www/orz2.online/html"
@@ -67,6 +74,147 @@ ensure_rsync() {
 
   command -v rsync >/dev/null 2>&1 || die "rsync installation finished but rsync is still not available in PATH"
   log "rsync installed: $(command -v rsync)"
+}
+
+resolve_path() {
+  local value="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$value"
+  else
+    readlink -f "$value"
+  fi
+}
+
+deploy_user_can_run() {
+  local command="$1"
+  run_as_deploy_user "cd /tmp && $command" >/dev/null 2>&1
+}
+
+link_node_bin() {
+  local node_home="$1"
+  local tool="$2"
+
+  [ -x "$node_home/bin/$tool" ] || return 0
+  ln -sf "$node_home/bin/$tool" "/usr/local/bin/$tool"
+}
+
+ensure_deploy_user_home_dirs() {
+  local home_dir
+  home_dir="$(getent passwd "$DEPLOY_USER" | awk -F: '{print $6}')"
+  [ -n "$home_dir" ] || return 0
+
+  mkdir -p "$home_dir/.pm2" "$home_dir/.local/share/pnpm" "$home_dir/.cache"
+  chown -R "$DEPLOY_USER:$DEPLOY_GROUP" "$home_dir/.pm2" "$home_dir/.local" "$home_dir/.cache"
+}
+
+ensure_system_node_runtime() {
+  if deploy_user_can_run "command -v node && command -v npm && node -v && npm -v"; then
+    log "node/npm are already available to deploy user '$DEPLOY_USER'"
+    return
+  fi
+
+  command -v node >/dev/null 2>&1 || die "node is required to prepare deploy tooling. Install Node.js first."
+  command -v npm >/dev/null 2>&1 || die "npm is required to prepare deploy tooling. Install npm first."
+
+  local node_exec node_home node_version node_dst
+  node_exec="$(resolve_path "$(command -v node)")"
+  node_home="$(dirname "$(dirname "$node_exec")")"
+  node_version="$(node -p 'process.version')"
+
+  if [ -x "$node_home/bin/node" ] && [ -x "$node_home/bin/npm" ]; then
+    node_dst="$SYSTEM_NODE_ROOT/$node_version"
+    if [ "$node_home" != "$node_dst" ]; then
+      log "Copying Node runtime from $node_home to $node_dst."
+      mkdir -p "$(dirname "$node_dst")"
+      rsync -a --delete "$node_home"/ "$node_dst"/
+      chown -R root:root "$node_dst"
+      chmod -R a+rX "$SYSTEM_NODE_ROOT"
+    fi
+
+    link_node_bin "$node_dst" node
+    link_node_bin "$node_dst" npm
+    link_node_bin "$node_dst" npx
+    link_node_bin "$node_dst" corepack
+  else
+    log "Using existing system Node runtime from $node_exec."
+    ln -sf "$node_exec" /usr/local/bin/node
+    ln -sf "$(resolve_path "$(command -v npm)")" /usr/local/bin/npm
+    if command -v npx >/dev/null 2>&1; then
+      ln -sf "$(resolve_path "$(command -v npx)")" /usr/local/bin/npx
+    fi
+    if command -v corepack >/dev/null 2>&1; then
+      ln -sf "$(resolve_path "$(command -v corepack)")" /usr/local/bin/corepack
+    fi
+  fi
+
+  hash -r
+
+  if ! deploy_user_can_run "command -v node && command -v npm && node -v && npm -v"; then
+    die "node/npm are still not available to deploy user '$DEPLOY_USER' after exposing them through /usr/local/bin"
+  fi
+  log "node/npm are available to deploy user '$DEPLOY_USER'"
+}
+
+install_npm_global() {
+  local package_name="$1"
+  PATH="/usr/local/bin:/usr/bin:/bin:$PATH" npm install -g "$package_name"
+  hash -r
+}
+
+refresh_node_tool_links() {
+  local node_exec node_home
+  if [ -x /usr/local/bin/node ]; then
+    node_exec="$(resolve_path /usr/local/bin/node)"
+  else
+    node_exec="$(resolve_path "$(command -v node)")"
+  fi
+  node_home="$(dirname "$(dirname "$node_exec")")"
+
+  link_node_bin "$node_home" pnpm
+  link_node_bin "$node_home" pm2
+  link_node_bin "$node_home" pm2-runtime
+  link_node_bin "$node_home" pm2-dev
+}
+
+ensure_pnpm() {
+  if [ "$INSTALL_PNPM" != "true" ]; then
+    return
+  fi
+
+  ensure_system_node_runtime
+
+  if deploy_user_can_run "command -v pnpm && pnpm -v"; then
+    log "pnpm is already available to deploy user '$DEPLOY_USER'"
+    return
+  fi
+
+  log "Installing pnpm@$PNPM_VERSION."
+  install_npm_global "pnpm@$PNPM_VERSION"
+  refresh_node_tool_links
+
+  deploy_user_can_run "command -v pnpm && pnpm -v" || die "pnpm is not available to deploy user '$DEPLOY_USER' after installation"
+  log "pnpm is available to deploy user '$DEPLOY_USER'"
+}
+
+ensure_pm2() {
+  if [ "$INSTALL_PM2" != "true" ]; then
+    return
+  fi
+
+  ensure_system_node_runtime
+
+  if deploy_user_can_run "command -v pm2 && pm2 -v"; then
+    log "pm2 is already available to deploy user '$DEPLOY_USER'"
+    return
+  fi
+
+  log "Installing pm2@$PM2_VERSION."
+  install_npm_global "pm2@$PM2_VERSION"
+  refresh_node_tool_links
+  ensure_deploy_user_home_dirs
+
+  deploy_user_can_run "command -v pm2 && pm2 -v" || die "pm2 is not available to deploy user '$DEPLOY_USER' after installation"
+  log "pm2 is available to deploy user '$DEPLOY_USER'"
 }
 
 trim_line() {
@@ -167,6 +315,25 @@ ensure_user() {
   fi
 }
 
+run_as_deploy_user() {
+  local command="$1"
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u "$DEPLOY_USER" -- sh -c "$command"
+  else
+    su -s /bin/sh "$DEPLOY_USER" -c "$command"
+  fi
+}
+
+verify_deploy_user_tool() {
+  local tool="$1"
+  if run_as_deploy_user "cd /tmp && command -v '$tool' >/dev/null 2>&1"; then
+    log "$tool is available to deploy user '$DEPLOY_USER'"
+    return
+  fi
+
+  die "$tool is not available to deploy user '$DEPLOY_USER' in a non-interactive shell"
+}
+
 configure_path() {
   local raw_path="$1"
   local path
@@ -211,6 +378,16 @@ main() {
   ensure_rsync
   ensure_group
   ensure_user
+  ensure_deploy_user_home_dirs
+  ensure_pnpm
+  ensure_pm2
+  verify_deploy_user_tool rsync
+  if [ "$INSTALL_PNPM" = "true" ]; then
+    verify_deploy_user_tool pnpm
+  fi
+  if [ "$INSTALL_PM2" = "true" ]; then
+    verify_deploy_user_tool pm2
+  fi
 
   local path
   for path in "${DEPLOY_TARGET_PATHS[@]}"; do
