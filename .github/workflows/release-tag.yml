@@ -47,9 +47,9 @@ on:
         type: choice
         default: "patch"
         options:
-          - major
-          - minor
           - patch
+          - minor
+          - major
           - none
       prefix:
         description: "Tag prefix."

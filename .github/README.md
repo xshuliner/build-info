@@ -44,6 +44,26 @@
 
 单独运行 `Release Tag` 时，如果需要同样同步 `package.json`，勾选 `sync_package_json_version`；这个选项要求 workflow 运行在分支 ref 上。
 
+## 业务项目接入约定
+
+`release-deploy.yml` 会先解析版本，再执行业务构建，构建成功后创建 tag 并部署。因为 build info 通常在业务构建命令里生成，而 tag 此时还没有推送，workflow 会先在 build job 创建一个不推送的本地 release tag，并在 `build_command` 环境中默认注入：
+
+| 变量 | 值 | 用途 |
+| --- | --- | --- |
+| `RELEASE_VERSION` | `v1.2.3` | 通用 release tag。 |
+| `RELEASE_VERSION_NUMBER` | `1.2.3` | 无前缀版本号。 |
+| `XSHULINER_TAG_VERSION` | `v1.2.3` | `build-info` 的 `tagVersion` 和 `git.nearestTag`。 |
+| `XSHULINER_RELEASE_VERSION` | `v1.2.3` | `XSHULINER_TAG_VERSION` 的兼容别名。 |
+| `XSHULINER_APP_VERSION` | `1.2.3` | `build-info` 的 `app.version`。 |
+
+接入业务项目时保持这些约定：
+
+- `bump` selector 顺序统一为 `patch`、`minor`、`major`、`none`，默认值放第一。
+- 环境 selector 也按默认/高频环境优先，README 表格和 workflow options 保持同序。
+- 需要 Git 信息的 checkout 使用 `fetch-depth: 0`。
+- 前端构建前执行 `xbi generate`，不要在业务项目里再次计算版本。
+- `XSHULINER_RELEASE_ID` 用于部署追踪 id，可以是 `${{ github.run_id }}-${{ github.sha }}`，不要拿它替代 tag 版本。
+
 ## 构建信息产物
 
 CI 会生成并上传 artifact：

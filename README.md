@@ -98,6 +98,7 @@ xshuliner-build-info generate
 xbi generate \
   --out public/__xshuliner__ \
   --global-name __xshuliner__ \
+  --tag-version v1.0.0 \
   --app-name my-app \
   --app-version 1.0.0 \
   --env production \
@@ -124,6 +125,7 @@ import { generateBuildInfo } from '@xshuliner/build-info/node'
 await generateBuildInfo({
   outDir: 'public/__xshuliner__',
   globalName: '__xshuliner__',
+  tagVersion: 'v1.0.0',
   appName: 'my-app',
   env: 'production'
 })
@@ -160,7 +162,9 @@ jobs:
 
 这样生成的 `build-info.json` 会包含 GitHub Actions run、commit、branch 等构建期信息。
 
-正式发布或部署时，如果版本号由 tag 自增，推荐先完成版本动作，再生成 build info。`xbi generate` 读取应用版本的优先级是 `--app-version`、`XSHULINER_APP_VERSION`、当前工作区的 `package.json.version`；如果希望它读取自增后的 `package.json.version`，就不要在生成命令里覆盖 app version，并在当前 Actions 工作区临时写入新版本号。
+正式发布或部署时，如果版本号由 tag 自增，推荐先完成版本解析，再生成 build info。`xbi generate` 读取应用版本的优先级是 `--app-version`、`XSHULINER_APP_VERSION`、当前工作区的 `package.json.version`；读取 tag 版本的优先级是 `--tag-version`、`XSHULINER_TAG_VERSION`、`XSHULINER_RELEASE_VERSION`、当前 Git checkout 能看到的 tag。
+
+如果 tag 会在 build job 之后才创建，务必把 workflow 解析出的 tag 显式传给 `XSHULINER_TAG_VERSION` 或 `--tag-version`。这样 `tagVersion` 和 `git.nearestTag` 会使用本次 release 版本，而不是 `git describe` 在构建时看到的上一个 tag。
 
 如果业务仓库复用 `release-tag.yml`，推荐顺序如下：
 
@@ -179,6 +183,7 @@ on:
           - patch
           - minor
           - major
+          - none
 
 permissions:
   contents: write
@@ -219,15 +224,29 @@ jobs:
           NODE
       - name: Generate build info
         env:
+          XSHULINER_TAG_VERSION: ${{ needs.tag.outputs.version }}
+          XSHULINER_RELEASE_VERSION: ${{ needs.tag.outputs.version }}
+          XSHULINER_APP_VERSION: ${{ needs.tag.outputs.version_number }}
           XSHULINER_RELEASE_ID: ${{ needs.tag.outputs.version }}
           XSHULINER_BUILD_ID: ${{ github.run_number }}
         run: pnpm exec xbi generate --env production --mode github-actions
       - run: pnpm build
 ```
 
-关键点是：`release-tag.yml` 先根据已有 tag 计算下一版并创建 tag；后续 build job checkout 这个 tag，把 `needs.tag.outputs.version_number` 临时写入当前工作区的 `package.json.version`，再执行 `xbi generate`。这样生成的 `build-info.json` 会拿到更新后的版本号，但仓库不会多出同步 `package.json` 的提交。
+关键点是：`release-tag.yml` 先根据已有 tag 计算下一版并创建 tag；后续 build job checkout 这个 tag，把 `needs.tag.outputs.version_number` 临时写入当前工作区的 `package.json.version`，并把 `needs.tag.outputs.version` 传给 `XSHULINER_TAG_VERSION`，再执行 `xbi generate`。这样生成的 `build-info.json` 会拿到更新后的版本号和 tag，但仓库不会多出同步 `package.json` 的提交。
 
-如果不使用 reusable workflow，也保持同样顺序：计算下一版、创建 tag、在构建工作区临时写入 `package.json.version`、执行 `xbi generate`、最后运行前端构建。临时写入只服务本次构建，不需要 `git commit`。
+如果使用本仓库的 `release-deploy.yml`，workflow 会在 build job 里先创建一个不推送的本地 release tag，并在 `build_command` 环境中默认注入 `RELEASE_VERSION`、`RELEASE_VERSION_NUMBER`、`XSHULINER_TAG_VERSION`、`XSHULINER_RELEASE_VERSION` 和 `XSHULINER_APP_VERSION`。业务项目只要在前端构建前执行 `xbi generate`，就能让 `tagVersion`、`app.version` 和 `git.nearestTag` 对齐到同一个 resolved version；远端 tag 仍然在构建成功后由 tag job 推送。
+
+如果不使用 reusable workflow，也保持同样原则：先得到单一版本来源，再把 tag 版本传给 `XSHULINER_TAG_VERSION`，把数字版本传给 `XSHULINER_APP_VERSION`，执行 `xbi generate`，最后运行前端构建。临时写入 `package.json.version` 只服务本次构建，不需要 `git commit`。
+
+### Workflow 接入最佳实践
+
+- 单一版本来源：release workflow 只输出 `version`（如 `v1.2.3`）和 `version_number`（如 `1.2.3`），业务项目不要再次自行计算。
+- 版本变量命名：`XSHULINER_TAG_VERSION`/`XSHULINER_RELEASE_VERSION` 放 tag，`XSHULINER_APP_VERSION` 放无前缀版本，`XSHULINER_RELEASE_ID` 放部署追踪 id。
+- checkout：需要 Git 信息的 job 使用 `actions/checkout` 并设置 `fetch-depth: 0`。
+- 生成顺序：在前端构建命令之前运行 `xbi generate`，确保产物里的 `build-info.js` 和 `build-info.json` 跟随同一次构建。
+- selector 顺序：`bump` 的 `workflow_dispatch` 选项统一为 `patch`、`minor`、`major`、`none`，默认值放第一；环境 selector 也按默认/高频环境优先，文档和 workflow 保持同序。
+- 占位版本：如果项目版本完全由 workflow 赋值，`package.json.version` 可以保留占位值，但 build job 必须注入 `XSHULINER_APP_VERSION` 或临时同步 `package.json.version`。
 
 ## 发布这个包到 npm
 

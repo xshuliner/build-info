@@ -507,6 +507,15 @@ jobs:
           PROJECT_NAME: ${{ steps.context.outputs.project_name }}
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
           RELEASE_VERSION_NUMBER: ${{ needs.version.outputs.version_number }}
+          SHOULD_TAG: ${{ needs.version.outputs.should_tag }}
+          XSHULINER_TAG_VERSION: ${{ needs.version.outputs.version }}
+          XSHULINER_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          XSHULINER_APP_VERSION: ${{ needs.version.outputs.version_number }}
+          XSHULINER_APP_ENV: ${{ inputs.env }}
+          XSHULINER_APP_MODE: github-actions
+          XSHULINER_DEPLOY_TARGET: ${{ needs.validate.outputs.target_kind }}
+          XSHULINER_DEPLOY_URL: ${{ steps.context.outputs.preview_url }}
+          XSHULINER_BUILD_ID: ${{ github.run_number }}
         run: |
           set -euo pipefail
 
@@ -517,6 +526,15 @@ jobs:
           echo "PROJECT_NAME=$PROJECT_NAME"
           echo "RELEASE_VERSION=$RELEASE_VERSION"
           echo "sync_package_json_version_before_build=${{ inputs.sync_package_json_version_before_build }}"
+
+          if [ "$SHOULD_TAG" = "true" ] && [ -n "$RELEASE_VERSION" ]; then
+            if git rev-parse -q --verify "refs/tags/$RELEASE_VERSION" >/dev/null; then
+              echo "local release tag already exists: $RELEASE_VERSION"
+            else
+              git tag "$RELEASE_VERSION" "$GITHUB_SHA"
+              echo "local release tag created for build metadata: $RELEASE_VERSION"
+            fi
+          fi
 
           if [ "${{ inputs.sync_package_json_version_before_build }}" = "true" ] && [ "${{ inputs.bump }}" != "none" ]; then
             if [ -z "${RELEASE_VERSION_NUMBER:-}" ]; then

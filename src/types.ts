@@ -66,6 +66,7 @@ export interface GenerateBuildInfoOptions {
   cwd?: string
   outDir?: string
   globalName?: string
+  tagVersion?: string
   appName?: string
   appVersion?: string
   env?: string

@@ -59,6 +59,29 @@ describe('collectBuildInfo', () => {
     expect(info.tagVersion).toBe('v1.2.3')
     expect(info.git.nearestTag).toBe('v1.2.3')
   })
+
+  it('uses the resolved release tag from the workflow before reachable Git tags', () => {
+    const cwd = createTempDir()
+    runGit(cwd, 'git -c init.defaultBranch=main init')
+    runGit(cwd, 'git config user.name "Test User"')
+    runGit(cwd, 'git config user.email "test@example.com"')
+    writeFileSync(join(cwd, 'package.json'), '{"name":"pkg-name","version":"1.2.3"}')
+    writeFileSync(join(cwd, 'file.txt'), 'first')
+    runGit(cwd, 'git add package.json file.txt')
+    runGit(cwd, 'git commit -m "first"')
+    runGit(cwd, 'git tag v1.2.3')
+    writeFileSync(join(cwd, 'file.txt'), 'second')
+    runGit(cwd, 'git add file.txt')
+    runGit(cwd, 'git commit -m "second"')
+    process.env.XSHULINER_TAG_VERSION = 'v1.2.4'
+    process.env.XSHULINER_APP_VERSION = '1.2.4'
+
+    const info = collectBuildInfo({ cwd })
+
+    expect(info.tagVersion).toBe('v1.2.4')
+    expect(info.app.version).toBe('1.2.4')
+    expect(info.git.nearestTag).toBe('v1.2.4')
+  })
 })
 
 function createTempDir(): string {

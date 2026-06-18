@@ -10,6 +10,7 @@ const HELP = `Usage:
 Options:
   --out <dir>                  Output directory. Default: ${DEFAULT_OUT_DIR}
   --global-name <name>         Global variable name. Default: ${DEFAULT_GLOBAL_NAME}
+  --tag-version <tag>          Release tag version, for example v1.2.3.
   --app-name <name>            Application name.
   --app-version <version>      Application version.
   --env <env>                  Application environment.
@@ -55,6 +56,7 @@ function parseOptions(args: string[]): GenerateBuildInfoOptions {
   const optionMap: Record<string, keyof GenerateBuildInfoOptions> = {
     '--out': 'outDir',
     '--global-name': 'globalName',
+    '--tag-version': 'tagVersion',
     '--app-name': 'appName',
     '--app-version': 'appVersion',
     '--env': 'env',

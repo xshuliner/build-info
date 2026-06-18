@@ -13,7 +13,9 @@ export function collectBuildInfo(options: GenerateBuildInfoOptions = {}): BuildI
   const pkg = readPackageJson(cwd)
   const now = new Date()
   const timestamp = now.getTime()
-  const git = collectGitInfo(cwd)
+  const releaseTagVersion =
+    options.tagVersion || pickEnv(['XSHULINER_TAG_VERSION', 'XSHULINER_RELEASE_VERSION'])
+  const git = applyReleaseTagVersion(collectGitInfo(cwd), releaseTagVersion)
   const ci = collectCiInfo(git.commit)
   const appName = options.appName || pickEnv(['XSHULINER_APP_NAME']) || stringValue(pkg.name) || 'unknown-app'
   const appVersion = options.appVersion || pickEnv(['XSHULINER_APP_VERSION']) || stringValue(pkg.version)
@@ -22,7 +24,7 @@ export function collectBuildInfo(options: GenerateBuildInfoOptions = {}): BuildI
   const releaseId = options.releaseId || pickEnv(['XSHULINER_RELEASE_ID']) || `${git.shortCommit}-${timestamp}`
 
   const info: BuildInfo = {
-    tagVersion: git.tag || git.nearestTag || '',
+    tagVersion: releaseTagVersion || git.tag || git.nearestTag || '',
     app: {
       name: appName,
       version: appVersion,
@@ -58,6 +60,18 @@ export function collectBuildInfo(options: GenerateBuildInfoOptions = {}): BuildI
   }
 
   return info
+}
+
+function applyReleaseTagVersion(git: BuildInfo['git'], tagVersion: string): BuildInfo['git'] {
+  if (!tagVersion) {
+    return git
+  }
+
+  return {
+    ...git,
+    tag: git.tag || tagVersion,
+    nearestTag: tagVersion
+  }
 }
 
 function resolveBuildUser(cwd: string): string {
