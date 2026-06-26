@@ -118,6 +118,53 @@ When modifying reusable workflow inputs, outputs, secrets, or behavior, update b
 
 Do not print secret values in workflow logs. Use public names such as `SSH_HOST`, `SSH_USERNAME`, `SSH_KEY`, `SERVER_PATH`, `NOTIFY_WEBHOOKS`, and `REPORT_AUTHORIZATION` consistently with the migrated workflow conventions.
 
+### Reusable Deploy Workflow Conventions
+
+`release-deploy.yml` is the shared CI/CD contract for business repositories. Keep the common workflow responsible for version resolution, temporary package version sync, dependency install, build execution, artifact packaging, generic deploy transports, deploy reporting, webhook notification, and run summaries. Keep business-specific knowledge in each caller: build commands, server paths, PM2 commands, brand/appid mapping, R2 bucket names, and public URLs.
+
+Supported `target` values:
+
+- `web` and `api`: server deploys over SSH/rsync.
+- `server`: generic server deploy over SSH/rsync.
+- `weapp`: WeChat Mini Program upload.
+- `r2`: Cloudflare R2 upload.
+
+Business project `workflow_dispatch` inputs must use the same names, descriptions, defaults, and option order unless there is a strong reason to document an exception:
+
+```yaml
+env:
+  description: Deployment environment.
+  required: true
+  default: prod
+  type: choice
+  options:
+    - prod
+    - uat
+bump:
+  description: Version bump before deploy.
+  required: false
+  default: patch
+  type: choice
+  options:
+    - patch
+    - minor
+    - major
+    - none
+```
+
+`bump: none` reuses the latest matching tag and does not create a new tag. The build job still receives the resolved version and, when `sync_package_json_version_before_build` is true, gets a temporary `package.json` version update without committing it.
+
+The shared build step injects these environment variables for callers:
+
+- `RELEASE_VERSION` and `RELEASE_VERSION_NUMBER`
+- `XSHULINER_TAG_VERSION`, `XSHULINER_RELEASE_VERSION`, and `XSHULINER_APP_VERSION`
+- `XSHULINER_APP_ENV`, `XSHULINER_APP_MODE`, `XSHULINER_DEPLOY_TARGET`, `XSHULINER_DEPLOY_REGION`, and `XSHULINER_DEPLOY_URL`
+- `XSHULINER_RELEASE_ID` and `XSHULINER_BUILD_ID`
+
+Do not duplicate these exports in business workflows unless the project intentionally overrides them.
+
+Business `.github/README.md` files should stay short: document the manual entry point, the shared `env`/`bump` inputs, required secrets, and only the project-specific deploy paths, PM2 names, brand mapping, or R2 URL shape.
+
 ## Release Notes
 
 The package version currently lives in `package.json`. `release-package.yml` can create semantic Git tags through the migrated `release-tag.yml`. Publishing to npm requires `NPM_TOKEN` and `publish_to_npm: true`.

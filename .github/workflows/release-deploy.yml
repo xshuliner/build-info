@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       target:
-        description: "Deployment target: server, web, api, or weapp. web/api use the server deployment path."
+        description: "Deployment target: server, web, api, weapp, or r2. web/api use the server deployment path."
         required: true
         type: string
       env:
@@ -116,6 +116,27 @@ on:
         type: string
         default: ""
 
+      r2_bucket:
+        description: "Cloudflare R2 bucket name for target=r2."
+        required: false
+        type: string
+        default: ""
+      r2_destination_dir:
+        description: "Cloudflare R2 destination directory. Supports {project}, {env}, {version}, {version_number}, and {bucket}."
+        required: false
+        type: string
+        default: "{version_number}"
+      r2_public_base_url:
+        description: "Public base URL for uploaded R2 files. Supports {project}, {env}, {version}, {version_number}, and {bucket}."
+        required: false
+        type: string
+        default: ""
+      r2_keep_file_fresh:
+        description: "Pass keep-file-fresh to the R2 upload action."
+        required: false
+        type: boolean
+        default: false
+
       notify_webhooks:
         description: "JSON array of webhook targets. Prefer the NOTIFY_WEBHOOKS secret for real URLs."
         required: false
@@ -215,6 +236,12 @@ on:
         required: false
       REPORT_AUTHORIZATION:
         required: false
+      CLOUDFLARE_R2_ACCOUNT_ID:
+        required: false
+      CLOUDFLARE_R2_ACCESS_KEY_ID:
+        required: false
+      CLOUDFLARE_R2_SECRET_ACCESS_KEY:
+        required: false
 
     outputs:
       version:
@@ -270,8 +297,11 @@ jobs:
             weapp)
               deploy_target="weapp"
               ;;
+            r2)
+              deploy_target="r2"
+              ;;
             *)
-              echo "::error::target must be one of: server, web, api, weapp"
+              echo "::error::target must be one of: server, web, api, weapp, r2"
               exit 1
               ;;
           esac
@@ -349,6 +379,9 @@ jobs:
           echo "server_clean_mode=$SERVER_CLEAN_MODE"
           echo "server_command=${{ inputs.server_command != '' && '<configured>' || '<empty>' }}"
           echo "weapp_project_path=${{ inputs.weapp_project_path || '<build_path>' }}"
+          echo "r2_bucket=${{ inputs.r2_bucket != '' && '<configured>' || '<empty>' }}"
+          echo "r2_destination_dir=${{ inputs.r2_destination_dir }}"
+          echo "r2_public_base_url=${{ inputs.r2_public_base_url != '' && '<configured>' || '<empty>' }}"
           echo "notify_webhooks=${{ inputs.notify_webhooks != '' && '<input>' || '<input empty>' }}"
           echo "notify_when=$NOTIFY_WHEN"
           echo "report_enabled=${{ inputs.report_enabled }}"
@@ -360,7 +393,7 @@ jobs:
 
   version:
     needs: validate
-    uses: ./.github/workflows/release-version.yml
+    uses: xshuliner/build-info/.github/workflows/release-version.yml@master
     with:
       bump: ${{ inputs.bump }}
       prefix: ${{ inputs.tag_prefix }}
@@ -377,6 +410,7 @@ jobs:
       repository_path: ${{ steps.context.outputs.repository_path }}
       preview_url: ${{ steps.context.outputs.preview_url }}
       local_path: ${{ steps.context.outputs.local_path }}
+      r2_destination_dir: ${{ steps.context.outputs.r2_destination_dir }}
       source_type: ${{ steps.package.outputs.source_type }}
       file_count: ${{ steps.package.outputs.file_count }}
       artifact_size: ${{ steps.package.outputs.artifact_size }}
@@ -410,6 +444,9 @@ jobs:
           SERVER_PREVIEW_URL_TEMPLATE: ${{ inputs.server_preview_url }}
           SERVER_PREVIEW_URL_MAP: ${{ inputs.server_preview_url_map }}
           WEAPP_PROJECT_PATH: ${{ inputs.weapp_project_path }}
+          R2_BUCKET: ${{ inputs.r2_bucket }}
+          R2_DESTINATION_DIR: ${{ inputs.r2_destination_dir }}
+          R2_PUBLIC_BASE_URL: ${{ inputs.r2_public_base_url }}
           VERSION: ${{ needs.version.outputs.version }}
           VERSION_NUMBER: ${{ needs.version.outputs.version_number }}
         run: |
@@ -424,6 +461,7 @@ jobs:
             value="${value//\{env\}/$DEPLOY_ENV}"
             value="${value//\{version\}/$VERSION}"
             value="${value//\{version_number\}/$VERSION_NUMBER}"
+            value="${value//\{bucket\}/$R2_BUCKET}"
             printf '%s' "$value"
           }
 
@@ -445,6 +483,7 @@ jobs:
           preview_template="$(lookup_env_value "$SERVER_PREVIEW_URL_MAP" "$DEPLOY_ENV")"
           preview_template="${preview_template:-$SERVER_PREVIEW_URL_TEMPLATE}"
           preview_url="$(render_template "$preview_template")"
+          r2_destination_dir=""
 
           if [ "$DEPLOY_TARGET" = "server" ]; then
             server_path_template="$(lookup_env_value "$SERVER_PATH_MAP" "$DEPLOY_ENV")"
@@ -456,9 +495,27 @@ jobs:
             repository_path="$(render_template "$server_path_template")"
             local_path="$(resolve_local_path "$BUILD_PATH")"
           else
-            weapp_path="${WEAPP_PROJECT_PATH:-$BUILD_PATH}"
-            repository_path="$weapp_path"
-            local_path="$(resolve_local_path "$weapp_path")"
+            if [ "$DEPLOY_TARGET" = "weapp" ]; then
+              weapp_path="${WEAPP_PROJECT_PATH:-$BUILD_PATH}"
+              repository_path="$weapp_path"
+              local_path="$(resolve_local_path "$weapp_path")"
+            else
+              if [ -z "$R2_BUCKET" ]; then
+                echo "::error::r2_bucket input is required for target=r2"
+                exit 1
+              fi
+
+              r2_destination_dir="$(render_template "$R2_DESTINATION_DIR")"
+              r2_destination_dir="${r2_destination_dir#/}"
+              r2_destination_dir="${r2_destination_dir%/}"
+              repository_path="$R2_BUCKET${r2_destination_dir:+/$r2_destination_dir}"
+              local_path="$(resolve_local_path "$BUILD_PATH")"
+
+              if [ -n "$R2_PUBLIC_BASE_URL" ]; then
+                preview_url="$(render_template "$R2_PUBLIC_BASE_URL")"
+                preview_url="${preview_url%/}"
+              fi
+            fi
           fi
 
           {
@@ -466,6 +523,7 @@ jobs:
             echo "repository_path=$repository_path"
             echo "local_path=$local_path"
             echo "preview_url=$preview_url"
+            echo "r2_destination_dir=$r2_destination_dir"
           } >> "$GITHUB_OUTPUT"
 
           echo "::group::Deploy context"
@@ -514,7 +572,9 @@ jobs:
           XSHULINER_APP_ENV: ${{ inputs.env }}
           XSHULINER_APP_MODE: github-actions
           XSHULINER_DEPLOY_TARGET: ${{ needs.validate.outputs.target_kind }}
+          XSHULINER_DEPLOY_REGION: ${{ needs.validate.outputs.deploy_target == 'r2' && 'cloudflare-r2' || needs.validate.outputs.deploy_target }}
           XSHULINER_DEPLOY_URL: ${{ steps.context.outputs.preview_url }}
+          XSHULINER_RELEASE_ID: ${{ github.run_id }}-${{ github.sha }}
           XSHULINER_BUILD_ID: ${{ github.run_number }}
         run: |
           set -euo pipefail
@@ -536,7 +596,7 @@ jobs:
             fi
           fi
 
-          if [ "${{ inputs.sync_package_json_version_before_build }}" = "true" ] && [ "${{ inputs.bump }}" != "none" ]; then
+          if [ "${{ inputs.sync_package_json_version_before_build }}" = "true" ]; then
             if [ -z "${RELEASE_VERSION_NUMBER:-}" ]; then
               echo "::warning::Cannot sync package.json version because RELEASE_VERSION_NUMBER is empty."
             elif [ ! -f package.json ]; then
@@ -961,6 +1021,113 @@ jobs:
           echo "WeChat Mini Program upload completed."
           echo "::endgroup::"
 
+  deploy_r2:
+    needs:
+      - validate
+      - version
+      - build
+      - tag
+    if: always() && needs.validate.outputs.deploy_target == 'r2' && needs.build.result == 'success' && (needs.tag.result == 'success' || needs.tag.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.validate.outputs.artifact_name }}
+          path: ${{ runner.temp }}/release_artifact
+
+      - name: Prepare R2 upload
+        id: r2
+        shell: bash
+        env:
+          R2_BUCKET: ${{ inputs.r2_bucket }}
+          R2_DESTINATION_DIR: ${{ needs.build.outputs.r2_destination_dir }}
+          PREVIEW_URL: ${{ needs.build.outputs.preview_url }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_VERSION_NUMBER: ${{ needs.version.outputs.version_number }}
+          CLOUDFLARE_R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+          CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+
+          : "${R2_BUCKET:?r2_bucket input is required}"
+          : "${CLOUDFLARE_R2_ACCOUNT_ID:?CLOUDFLARE_R2_ACCOUNT_ID secret is required}"
+          : "${CLOUDFLARE_R2_ACCESS_KEY_ID:?CLOUDFLARE_R2_ACCESS_KEY_ID secret is required}"
+          : "${CLOUDFLARE_R2_SECRET_ACCESS_KEY:?CLOUDFLARE_R2_SECRET_ACCESS_KEY secret is required}"
+
+          artifact_dir="$RUNNER_TEMP/release_artifact"
+          payload_dir="$RUNNER_TEMP/release_payload"
+          rm -rf "$payload_dir"
+          mkdir -p "$payload_dir"
+          tar -xzf "$artifact_dir/output.tgz" -C "$payload_dir"
+
+          file_count="$(find "$payload_dir" -type f | wc -l | tr -d ' ')"
+          if [ "$file_count" -eq 0 ]; then
+            echo "::error::R2 upload source is empty."
+            exit 1
+          fi
+
+          echo "upload_source=$payload_dir" >> "$GITHUB_OUTPUT"
+
+          echo "::group::R2 upload"
+          echo "bucket=$R2_BUCKET"
+          echo "destination_dir=${R2_DESTINATION_DIR:-<bucket-root>}"
+          echo "preview_url=${PREVIEW_URL:-<empty>}"
+          echo "version=$RELEASE_VERSION"
+          echo "version_number=$RELEASE_VERSION_NUMBER"
+          echo "file_count=$file_count"
+          echo "artifact_size=$(du -sh "$payload_dir" | awk '{print $1}')"
+          find "$payload_dir" -maxdepth 1 -mindepth 1 -printf '%f\n' | sort | head -n 50
+          echo "::endgroup::"
+
+      - name: Upload to Cloudflare R2
+        uses: ryand56/r2-upload-action@latest
+        with:
+          r2-account-id: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          r2-bucket: ${{ inputs.r2_bucket }}
+          source-dir: ${{ steps.r2.outputs.upload_source }}
+          destination-dir: ${{ needs.build.outputs.r2_destination_dir }}
+          output-file-url: true
+          multipart-size: 100
+          max-retries: 5
+          multipart-concurrent: true
+          keep-file-fresh: ${{ inputs.r2_keep_file_fresh }}
+
+      - name: R2 summary
+        shell: bash
+        env:
+          PREVIEW_URL: ${{ needs.build.outputs.preview_url }}
+          R2_DESTINATION_DIR: ${{ needs.build.outputs.r2_destination_dir }}
+          R2_BUCKET: ${{ inputs.r2_bucket }}
+        run: |
+          set -euo pipefail
+
+          payload_dir="$RUNNER_TEMP/release_payload"
+
+          {
+            echo "### R2 Upload"
+            echo ""
+            echo "- Bucket: $R2_BUCKET"
+            echo "- Destination: ${R2_DESTINATION_DIR:-<bucket-root>}"
+            echo "- Public base URL: ${PREVIEW_URL:-<empty>}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$PREVIEW_URL" ]; then
+            {
+              echo ""
+              echo "Uploaded files:"
+              while IFS= read -r file; do
+                relative="${file#"$payload_dir"/}"
+                echo "- ${PREVIEW_URL%/}/$relative"
+              done < <(find "$payload_dir" -type f | sort | head -n 20)
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   report:
     needs:
       - validate
@@ -968,7 +1135,8 @@ jobs:
       - build
       - deploy_server
       - deploy_weapp
-    if: always() && inputs.report_enabled && (needs.deploy_server.result == 'success' || needs.deploy_weapp.result == 'success')
+      - deploy_r2
+    if: always() && inputs.report_enabled && (needs.deploy_server.result == 'success' || needs.deploy_weapp.result == 'success' || needs.deploy_r2.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -1127,6 +1295,7 @@ jobs:
       - tag
       - deploy_server
       - deploy_weapp
+      - deploy_r2
       - report
     if: always()
     runs-on: ubuntu-latest
@@ -1328,6 +1497,7 @@ jobs:
       - tag
       - deploy_server
       - deploy_weapp
+      - deploy_r2
       - report
       - notify
     if: always()
@@ -1366,7 +1536,7 @@ jobs:
             tag_created="true"
           fi
 
-          deploy_result="$(jq -r '.deploy_server.result as $server | .deploy_weapp.result as $weapp | if $server == "success" then $server elif $weapp == "success" then $weapp elif $server != "skipped" then $server else $weapp end' <<< "$NEEDS_JSON")"
+          deploy_result="$(jq -r '.deploy_server.result as $server | .deploy_weapp.result as $weapp | .deploy_r2.result as $r2 | if $server == "success" then $server elif $weapp == "success" then $weapp elif $r2 == "success" then $r2 elif $server != "skipped" then $server elif $weapp != "skipped" then $weapp else $r2 end' <<< "$NEEDS_JSON")"
           report_result="$(jq -r '.report.result // "skipped"' <<< "$NEEDS_JSON")"
           notify_result="$(jq -r '.notify.result // "skipped"' <<< "$NEEDS_JSON")"
 

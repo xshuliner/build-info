@@ -30,6 +30,7 @@
 | `NPM_TOKEN` | 否 | 仅在 `Release Package` 勾选 `publish_to_npm` 时需要，用于发布 `@xshuliner/build-info`。 |
 
 如果未来直接使用 `release-deploy.yml` 做服务器部署，还需要按目标配置 `SSH_HOST`、`SSH_USERNAME`、`SSH_KEY`、`SERVER_PATH` 或 `server_path`/`server_path_map`。
+如果使用 `target: r2` 上传到 Cloudflare R2，需要配置 `CLOUDFLARE_R2_ACCOUNT_ID`、`CLOUDFLARE_R2_ACCESS_KEY_ID` 和 `CLOUDFLARE_R2_SECRET_ACCESS_KEY`。
 API 项目需要 `pnpm`/PM2 时，可用 `INSTALL_PM2=true sudo -E bash scripts/configure-deploy-permissions.sh` 同时准备部署用户可用的 `pnpm` 和 PM2。
 
 ## 部署入口
@@ -47,6 +48,16 @@ API 项目需要 `pnpm`/PM2 时，可用 `INSTALL_PM2=true sudo -E bash scripts/
 
 ## 业务项目接入约定
 
+公共 `release-deploy.yml` 只放通用能力：版本解析、临时同步 `package.json` 版本、依赖安装、业务构建、产物打包、SSH/小程序/R2 部署、通知、上报和摘要。业务项目只保留自己的构建命令、服务器路径、PM2 命令、品牌密钥映射、R2 bucket 和公开 URL。
+
+支持的 `target`：
+
+| target | 用途 |
+| --- | --- |
+| `web` / `api` / `server` | SSH + rsync 部署到服务器。 |
+| `weapp` | 上传微信小程序体验版。 |
+| `r2` | 上传构建产物到 Cloudflare R2。 |
+
 `release-deploy.yml` 会先解析版本，再执行业务构建，构建成功后创建 tag 并部署。因为 build info 通常在业务构建命令里生成，而 tag 此时还没有推送，workflow 会先在 build job 创建一个不推送的本地 release tag，并在 `build_command` 环境中默认注入：
 
 | 变量 | 值 | 用途 |
@@ -56,14 +67,19 @@ API 项目需要 `pnpm`/PM2 时，可用 `INSTALL_PM2=true sudo -E bash scripts/
 | `XSHULINER_TAG_VERSION` | `v1.2.3` | `build-info` 的 `tagVersion` 和 `git.nearestTag`。 |
 | `XSHULINER_RELEASE_VERSION` | `v1.2.3` | `XSHULINER_TAG_VERSION` 的兼容别名。 |
 | `XSHULINER_APP_VERSION` | `1.2.3` | `build-info` 的 `app.version`。 |
+| `XSHULINER_RELEASE_ID` | `${{ github.run_id }}-${{ github.sha }}` | 部署追踪 id。 |
+| `XSHULINER_BUILD_ID` | `${{ github.run_number }}` | 构建序号。 |
 
 接入业务项目时保持这些约定：
 
-- `bump` selector 顺序统一为 `patch`、`minor`、`major`、`none`，默认值放第一。
-- 环境 selector 也按默认/高频环境优先，README 表格和 workflow options 保持同序。
+- `workflow_dispatch.inputs.env` 统一使用描述 `Deployment environment.`，默认 `prod`，顺序 `prod`、`uat`。
+- `workflow_dispatch.inputs.bump` 统一使用描述 `Version bump before deploy.`，默认 `patch`，顺序 `patch`、`minor`、`major`、`none`。
 - 需要 Git 信息的 checkout 使用 `fetch-depth: 0`。
 - 前端构建前执行 `xbi generate`，不要在业务项目里再次计算版本。
-- `XSHULINER_RELEASE_ID` 用于部署追踪 id，可以是 `${{ github.run_id }}-${{ github.sha }}`，不要拿它替代 tag 版本。
+- `XSHULINER_RELEASE_ID` 只做追踪 id，不要拿它替代 tag 版本。
+- 不要在业务 workflow 里重复 export 公共 workflow 已注入的 `XSHULINER_*` 变量，除非项目确实要覆盖默认值。
+
+`bump: none` 表示复用最新 tag，不创建新 tag。公共 workflow 仍会把解析出的版本注入构建环境，并在默认配置下临时同步 `package.json.version`，但不会提交。
 
 ## 构建信息产物
 
