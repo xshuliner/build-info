@@ -38,7 +38,7 @@ API 项目需要 `pnpm`/PM2 时，可用 `INSTALL_PM2=true sudo -E bash scripts/
 本仓库默认不做服务器部署。npm 包发布入口是 `Release Package`：
 
 1. 打开 `Actions` -> `Release Package`。
-2. 选择 `bump`：`patch`、`minor`、`major` 或 `none`。
+2. 选择 `bump`：`major`、`feat`、`fix` 或 `none`。`feat` 增加中版本号，`fix` 增加小版本号。
 3. 需要演练时勾选 `dry_run`。
 4. 需要发布 npm 时勾选 `publish_to_npm`，并确保已配置 `NPM_TOKEN`。
 
@@ -72,8 +72,9 @@ API 项目需要 `pnpm`/PM2 时，可用 `INSTALL_PM2=true sudo -E bash scripts/
 
 接入业务项目时保持这些约定：
 
-- `workflow_dispatch.inputs.env` 统一使用描述 `Deployment environment.`，默认 `prod`，顺序 `prod`、`uat`。
-- `workflow_dispatch.inputs.bump` 统一使用描述 `Version bump before deploy.`，默认 `patch`，顺序 `patch`、`minor`、`major`、`none`。
+- `workflow_dispatch.inputs.env` 统一使用描述 `Deployment environment (prod, uat).`，默认 `prod`，顺序 `prod`、`uat`。
+- `workflow_dispatch.inputs.bump` 统一使用描述 `Version bump before deploy (major, feat, fix, none).`，默认 `feat`，顺序 `major`、`feat`、`fix`、`none`。
+- `bump` 语义统一为：`major` 增加大版本号，`feat` 增加中版本号，`fix` 增加小版本号，`none` 不创建新 tag；公共 workflow 为兼容旧调用仍接受 `minor`/`patch`。
 - 需要 Git 信息的 checkout 使用 `fetch-depth: 0`。
 - 前端构建前执行 `xbi generate`，不要在业务项目里再次计算版本。
 - `XSHULINER_RELEASE_ID` 只做追踪 id，不要拿它替代 tag 版本。

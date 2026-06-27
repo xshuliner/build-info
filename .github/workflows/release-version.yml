@@ -4,10 +4,10 @@ on:
   workflow_call:
     inputs:
       bump:
-        description: "Version bump: major, minor, patch, or none."
+        description: "Version bump: major, feat, fix, or none. feat bumps the minor version, fix bumps the patch version."
         required: false
         type: string
-        default: "patch"
+        default: "feat"
       prefix:
         description: "Git tag prefix."
         required: false
@@ -62,9 +62,17 @@ jobs:
           set -euo pipefail
 
           case "$BUMP" in
-            major|minor|patch|none) ;;
+            major|feat|fix|none) ;;
+            minor)
+              echo "::warning::bump=minor is deprecated; use bump=feat."
+              BUMP="feat"
+              ;;
+            patch)
+              echo "::warning::bump=patch is deprecated; use bump=fix."
+              BUMP="fix"
+              ;;
             *)
-              echo "::error::bump must be one of: major, minor, patch, none"
+              echo "::error::bump must be one of: major, feat, fix, none"
               exit 1
               ;;
           esac
@@ -102,11 +110,11 @@ jobs:
               minor=0
               patch=0
               ;;
-            minor)
+            feat)
               minor=$((minor + 1))
               patch=0
               ;;
-            patch)
+            fix)
               patch=$((patch + 1))
               ;;
             none)

@@ -133,7 +133,7 @@ Business project `workflow_dispatch` inputs must use the same names, description
 
 ```yaml
 env:
-  description: Deployment environment.
+  description: Deployment environment (prod, uat).
   required: true
   default: prod
   type: choice
@@ -141,16 +141,18 @@ env:
     - prod
     - uat
 bump:
-  description: Version bump before deploy.
+  description: Version bump before deploy (major, feat, fix, none).
   required: false
-  default: patch
+  default: feat
   type: choice
   options:
-    - patch
-    - minor
     - major
+    - feat
+    - fix
     - none
 ```
+
+`bump: major` increments the major version, `bump: feat` increments the minor version, and `bump: fix` increments the patch version. Reusable workflows should keep accepting legacy `minor` and `patch` values as aliases for compatibility, but business `workflow_dispatch` forms should show only `major`, `feat`, `fix`, and `none`.
 
 `bump: none` reuses the latest matching tag and does not create a new tag. The build job still receives the resolved version and, when `sync_package_json_version_before_build` is true, gets a temporary `package.json` version update without committing it.
 

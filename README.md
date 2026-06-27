@@ -173,7 +173,7 @@ on:
   workflow_dispatch:
     inputs:
       env:
-        description: Deployment environment.
+        description: Deployment environment (prod, uat).
         required: true
         default: prod
         type: choice
@@ -181,14 +181,14 @@ on:
           - prod
           - uat
       bump:
-        description: Version bump before deploy.
+        description: Version bump before deploy (major, feat, fix, none).
         required: false
-        default: patch
+        default: feat
         type: choice
         options:
-          - patch
-          - minor
           - major
+          - feat
+          - fix
           - none
 
 permissions:
@@ -225,7 +225,8 @@ jobs:
 - 默认注入：`build_command` 会收到 `RELEASE_VERSION`、`RELEASE_VERSION_NUMBER`、`XSHULINER_TAG_VERSION`、`XSHULINER_RELEASE_VERSION`、`XSHULINER_APP_VERSION`、`XSHULINER_RELEASE_ID`、`XSHULINER_BUILD_ID` 等变量。
 - checkout：需要 Git 信息的 job 使用 `actions/checkout` 并设置 `fetch-depth: 0`。
 - 生成顺序：在前端构建命令之前运行 `xbi generate`，确保产物里的 `build-info.js` 和 `build-info.json` 跟随同一次构建。
-- 手动入口：`env` 统一描述为 `Deployment environment.`，默认 `prod`，顺序 `prod`、`uat`；`bump` 统一描述为 `Version bump before deploy.`，默认 `patch`，顺序 `patch`、`minor`、`major`、`none`。
+- 手动入口：`env` 统一描述为 `Deployment environment (prod, uat).`，默认 `prod`，顺序 `prod`、`uat`；`bump` 统一描述为 `Version bump before deploy (major, feat, fix, none).`，默认 `feat`，顺序 `major`、`feat`、`fix`、`none`。
+- 版本语义：`major` 增加大版本号，`feat` 增加中版本号，`fix` 增加小版本号；公共 workflow 为兼容旧调用仍接受 `minor`/`patch`，但业务项目手动入口只展示 `major`、`feat`、`fix`、`none`。
 - `bump: none`：复用最新 tag，不创建新 tag；公共 workflow 仍会注入解析出的版本，并临时同步 `package.json.version` 用于本次构建。
 - 占位版本：如果项目版本完全由 workflow 赋值，`package.json.version` 可以保留占位值，但 build job 必须注入 `XSHULINER_APP_VERSION` 或临时同步 `package.json.version`。
 

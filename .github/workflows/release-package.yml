@@ -4,14 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: Version bump before release.
+        description: Version bump before release (major, feat, fix, none).
         required: true
         type: choice
-        default: patch
+        default: feat
         options:
-          - patch
-          - minor
           - major
+          - feat
+          - fix
           - none
       dry_run:
         description: Calculate and build without creating a tag or publishing.

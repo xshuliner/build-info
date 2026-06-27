@@ -19,10 +19,10 @@ on:
         default: ""
 
       bump:
-        description: "Version bump before deploy: major, minor, patch, or none."
+        description: "Version bump before deploy: major, feat, fix, or none. feat bumps the minor version, fix bumps the patch version."
         required: false
         type: string
-        default: "patch"
+        default: "feat"
       tag_prefix:
         description: "Git tag prefix."
         required: false

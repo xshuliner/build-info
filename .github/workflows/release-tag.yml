@@ -4,10 +4,10 @@ on:
   workflow_call:
     inputs:
       bump:
-        description: "Version bump: major, minor, patch, or none."
+        description: "Version bump: major, feat, fix, or none. feat bumps the minor version, fix bumps the patch version."
         required: false
         type: string
-        default: "patch"
+        default: "feat"
       prefix:
         description: "Tag prefix."
         required: false
@@ -42,14 +42,14 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "Version bump."
+        description: "Version bump (major, feat, fix, none)."
         required: true
         type: choice
-        default: "patch"
+        default: "feat"
         options:
-          - patch
-          - minor
           - major
+          - feat
+          - fix
           - none
       prefix:
         description: "Tag prefix."
