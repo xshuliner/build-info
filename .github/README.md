@@ -48,7 +48,7 @@ API 项目需要 `pnpm`/PM2 时，可用 `INSTALL_PM2=true sudo -E bash scripts/
 
 ## 业务项目接入约定
 
-公共 `release-deploy.yml` 只放通用能力：版本解析、临时同步 `package.json` 版本、依赖安装、业务构建、产物打包、SSH/小程序/R2 部署、通知、上报和摘要。业务项目只保留自己的构建命令、服务器路径、PM2 命令、品牌密钥映射、R2 bucket 和公开 URL。
+公共 `release-deploy.yml` 只放通用能力：版本解析、临时同步 `package.json` 版本、依赖安装、业务构建、产物打包、SSH/小程序/R2 部署、服务器健康检查、通知、上报和摘要。业务项目只保留自己的构建命令、服务器路径、PM2 命令、品牌密钥映射、R2 bucket、公开 URL 和健康检查 URL。
 
 支持的 `target`：
 
@@ -79,6 +79,7 @@ API 项目需要 `pnpm`/PM2 时，可用 `INSTALL_PM2=true sudo -E bash scripts/
 - 前端构建前执行 `xbi generate`，不要在业务项目里再次计算版本。
 - `XSHULINER_RELEASE_ID` 只做追踪 id，不要拿它替代 tag 版本。
 - 不要在业务 workflow 里重复 export 公共 workflow 已注入的 `XSHULINER_*` 变量，除非项目确实要覆盖默认值。
+- 服务器部署后需要 HTTP 验证时，优先使用 `server_health_check_url` 或 `server_health_check_url_map`；响应内容校验使用 `server_health_check_expected_texts`，不要在业务 `server_command` 里复制 curl retry 逻辑。
 
 `bump: none` 表示复用最新 tag，不创建新 tag。公共 workflow 仍会把解析出的版本注入构建环境，并在默认配置下临时同步 `package.json.version`，但不会提交。
 

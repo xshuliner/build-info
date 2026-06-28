@@ -94,6 +94,36 @@ on:
         required: false
         type: string
         default: ""
+      server_health_check_url:
+        description: "URL checked from the remote server after server_command. Supports {project}, {env}, {version}, and {version_number}."
+        required: false
+        type: string
+        default: ""
+      server_health_check_url_map:
+        description: "JSON object mapping env names to remote health check URLs. Values support placeholders."
+        required: false
+        type: string
+        default: "{}"
+      server_health_check_expected_texts:
+        description: "JSON array of response text markers required by the server health check."
+        required: false
+        type: string
+        default: "[]"
+      server_health_check_status_code:
+        description: "Expected HTTP status code for the server health check."
+        required: false
+        type: string
+        default: "200"
+      server_health_check_retries:
+        description: "Server health check retry count."
+        required: false
+        type: number
+        default: 20
+      server_health_check_retry_interval:
+        description: "Seconds between server health check retries."
+        required: false
+        type: number
+        default: 2
       ssh_strict_host_key:
         description: "Use strict SSH host key checking with SSH_KNOWN_HOSTS or ssh-keyscan."
         required: false
@@ -256,6 +286,9 @@ on:
       repository_path:
         description: "Remote server path or Mini Program project path."
         value: ${{ jobs.build.outputs.repository_path }}
+      server_health_check_url:
+        description: "Resolved server health check URL."
+        value: ${{ jobs.build.outputs.server_health_check_url }}
 
 permissions:
   contents: write
@@ -283,6 +316,9 @@ jobs:
           SERVER_CLEAN_MODE: ${{ inputs.server_clean_mode }}
           SERVER_PATH_MAP: ${{ inputs.server_path_map }}
           SERVER_PREVIEW_URL_MAP: ${{ inputs.server_preview_url_map }}
+          SERVER_HEALTH_CHECK_URL_MAP: ${{ inputs.server_health_check_url_map }}
+          SERVER_HEALTH_CHECK_EXPECTED_TEXTS: ${{ inputs.server_health_check_expected_texts }}
+          SERVER_HEALTH_CHECK_STATUS_CODE: ${{ inputs.server_health_check_status_code }}
           NOTIFY_WHEN: ${{ inputs.notify_when }}
           REPORT_CONTENT: ${{ inputs.report_content }}
           REPORT_EXTRA_PAYLOAD: ${{ inputs.report_extra_payload }}
@@ -347,6 +383,15 @@ jobs:
 
           validate_json_object "server_path_map" "$SERVER_PATH_MAP"
           validate_json_object "server_preview_url_map" "$SERVER_PREVIEW_URL_MAP"
+          validate_json_object "server_health_check_url_map" "$SERVER_HEALTH_CHECK_URL_MAP"
+          if ! jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1 <<< "$SERVER_HEALTH_CHECK_EXPECTED_TEXTS"; then
+            echo "::error::server_health_check_expected_texts must be a JSON array of strings"
+            exit 1
+          fi
+          if ! [[ "$SERVER_HEALTH_CHECK_STATUS_CODE" =~ ^[0-9]{3}$ ]]; then
+            echo "::error::server_health_check_status_code must be a three-digit HTTP status code"
+            exit 1
+          fi
           validate_json_value "report_content" "$REPORT_CONTENT"
           validate_json_object "report_extra_payload" "$REPORT_EXTRA_PAYLOAD"
 
@@ -378,6 +423,11 @@ jobs:
           echo "server_preview_url_map=${{ inputs.server_preview_url_map != '{}' && '<configured>' || '<empty>' }}"
           echo "server_clean_mode=$SERVER_CLEAN_MODE"
           echo "server_command=${{ inputs.server_command != '' && '<configured>' || '<empty>' }}"
+          echo "server_health_check_url=${{ inputs.server_health_check_url != '' && '<configured>' || '<empty>' }}"
+          echo "server_health_check_url_map=${{ inputs.server_health_check_url_map != '{}' && '<configured>' || '<empty>' }}"
+          echo "server_health_check_expected_texts=$(jq 'length' <<< "$SERVER_HEALTH_CHECK_EXPECTED_TEXTS")"
+          echo "server_health_check_status_code=$SERVER_HEALTH_CHECK_STATUS_CODE"
+          echo "server_health_check_retries=${{ inputs.server_health_check_retries }}"
           echo "weapp_project_path=${{ inputs.weapp_project_path || '<build_path>' }}"
           echo "r2_bucket=${{ inputs.r2_bucket != '' && '<configured>' || '<empty>' }}"
           echo "r2_destination_dir=${{ inputs.r2_destination_dir }}"
@@ -411,6 +461,7 @@ jobs:
       preview_url: ${{ steps.context.outputs.preview_url }}
       local_path: ${{ steps.context.outputs.local_path }}
       r2_destination_dir: ${{ steps.context.outputs.r2_destination_dir }}
+      server_health_check_url: ${{ steps.context.outputs.server_health_check_url }}
       source_type: ${{ steps.package.outputs.source_type }}
       file_count: ${{ steps.package.outputs.file_count }}
       artifact_size: ${{ steps.package.outputs.artifact_size }}
@@ -443,6 +494,8 @@ jobs:
           SERVER_PATH_SECRET: ${{ secrets.SERVER_PATH }}
           SERVER_PREVIEW_URL_TEMPLATE: ${{ inputs.server_preview_url }}
           SERVER_PREVIEW_URL_MAP: ${{ inputs.server_preview_url_map }}
+          SERVER_HEALTH_CHECK_URL_TEMPLATE: ${{ inputs.server_health_check_url }}
+          SERVER_HEALTH_CHECK_URL_MAP: ${{ inputs.server_health_check_url_map }}
           WEAPP_PROJECT_PATH: ${{ inputs.weapp_project_path }}
           R2_BUCKET: ${{ inputs.r2_bucket }}
           R2_DESTINATION_DIR: ${{ inputs.r2_destination_dir }}
@@ -483,6 +536,9 @@ jobs:
           preview_template="$(lookup_env_value "$SERVER_PREVIEW_URL_MAP" "$DEPLOY_ENV")"
           preview_template="${preview_template:-$SERVER_PREVIEW_URL_TEMPLATE}"
           preview_url="$(render_template "$preview_template")"
+          health_check_template="$(lookup_env_value "$SERVER_HEALTH_CHECK_URL_MAP" "$DEPLOY_ENV")"
+          health_check_template="${health_check_template:-$SERVER_HEALTH_CHECK_URL_TEMPLATE}"
+          server_health_check_url="$(render_template "$health_check_template")"
           r2_destination_dir=""
 
           if [ "$DEPLOY_TARGET" = "server" ]; then
@@ -524,6 +580,7 @@ jobs:
             echo "local_path=$local_path"
             echo "preview_url=$preview_url"
             echo "r2_destination_dir=$r2_destination_dir"
+            echo "server_health_check_url=$server_health_check_url"
           } >> "$GITHUB_OUTPUT"
 
           echo "::group::Deploy context"
@@ -534,6 +591,7 @@ jobs:
           echo "local_path=$local_path"
           echo "repository_path=$repository_path"
           echo "preview_url=${preview_url:-<empty>}"
+          echo "server_health_check_url=$([ -n "$server_health_check_url" ] && echo '<configured>' || echo '<empty>')"
           echo "::endgroup::"
 
       - name: Install dependencies
@@ -763,6 +821,11 @@ jobs:
           REMOTE_PATH: ${{ needs.build.outputs.repository_path }}
           SERVER_CLEAN_MODE: ${{ inputs.server_clean_mode }}
           SERVER_COMMAND: ${{ inputs.server_command }}
+          SERVER_HEALTH_CHECK_URL: ${{ needs.build.outputs.server_health_check_url }}
+          SERVER_HEALTH_CHECK_EXPECTED_TEXTS: ${{ inputs.server_health_check_expected_texts }}
+          SERVER_HEALTH_CHECK_STATUS_CODE: ${{ inputs.server_health_check_status_code }}
+          SERVER_HEALTH_CHECK_RETRIES: ${{ inputs.server_health_check_retries }}
+          SERVER_HEALTH_CHECK_RETRY_INTERVAL: ${{ inputs.server_health_check_retry_interval }}
           SSH_STRICT_HOST_KEY: ${{ inputs.ssh_strict_host_key }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
@@ -795,6 +858,7 @@ jobs:
           echo "remote_path=$REMOTE_PATH"
           echo "server_clean_mode=$SERVER_CLEAN_MODE"
           echo "server_command=$([ -n "$SERVER_COMMAND" ] && echo '<configured>' || echo '<empty>')"
+          echo "server_health_check_url=$([ -n "$SERVER_HEALTH_CHECK_URL" ] && echo '<configured>' || echo '<empty>')"
           echo "artifact_file_count=$(find "$payload_dir" -type f | wc -l | tr -d ' ')"
           echo "artifact_size=$(du -sh "$payload_dir" | awk '{print $1}')"
           if [ "$TARGET_KIND" = "api" ] && [ -z "$SERVER_COMMAND" ]; then
@@ -929,6 +993,72 @@ jobs:
           rm -f "$command_file"
           REMOTE_COMMAND
             echo "server_command completed."
+          fi
+
+          if [ -n "$SERVER_HEALTH_CHECK_URL" ]; then
+            echo "Running server health check."
+            expected_texts_b64="$(jq -r '.[]' <<< "$SERVER_HEALTH_CHECK_EXPECTED_TEXTS" | base64 -w 0)"
+            health_check_url_quoted="$(printf '%q' "$SERVER_HEALTH_CHECK_URL")"
+            expected_status_quoted="$(printf '%q' "$SERVER_HEALTH_CHECK_STATUS_CODE")"
+            retries_quoted="$(printf '%q' "$SERVER_HEALTH_CHECK_RETRIES")"
+            retry_interval_quoted="$(printf '%q' "$SERVER_HEALTH_CHECK_RETRY_INTERVAL")"
+
+            # shellcheck disable=SC2029
+            ssh "${ssh_options[@]}" "$remote" \
+              "HEALTH_CHECK_URL=$health_check_url_quoted HEALTH_CHECK_EXPECTED_STATUS=$expected_status_quoted HEALTH_CHECK_RETRIES=$retries_quoted HEALTH_CHECK_RETRY_INTERVAL=$retry_interval_quoted HEALTH_CHECK_EXPECTED_TEXTS_B64=$expected_texts_b64 bash -se" <<'REMOTE_HEALTH_CHECK'
+          set -euo pipefail
+
+          if ! command -v curl >/dev/null 2>&1; then
+            echo "::error::curl is required on the remote server for server_health_check_url."
+            exit 1
+          fi
+
+          response_file="$(mktemp)"
+          expected_texts_file="$(mktemp)"
+          trap 'rm -f "$response_file" "$expected_texts_file"' EXIT
+
+          if [ -n "${HEALTH_CHECK_EXPECTED_TEXTS_B64:-}" ]; then
+            printf '%s' "$HEALTH_CHECK_EXPECTED_TEXTS_B64" | base64 -d > "$expected_texts_file"
+          fi
+
+          attempt=1
+          while [ "$attempt" -le "$HEALTH_CHECK_RETRIES" ]; do
+            http_status="$(curl -sS -L -o "$response_file" -w '%{http_code}' "$HEALTH_CHECK_URL" || true)"
+            http_status="${http_status:-000}"
+            if [ "$http_status" = "$HEALTH_CHECK_EXPECTED_STATUS" ]; then
+              missing_text=""
+              while IFS= read -r expected_text; do
+                [ -n "$expected_text" ] || continue
+                if ! grep -Fqi -- "$expected_text" "$response_file"; then
+                  missing_text="$expected_text"
+                  break
+                fi
+              done < "$expected_texts_file"
+
+              if [ -z "$missing_text" ]; then
+                echo "Health check passed: status=$http_status"
+                exit 0
+              fi
+
+              echo "Health check response is missing expected text: $missing_text"
+            else
+              echo "Health check waiting: attempt=$attempt status=$http_status expected=$HEALTH_CHECK_EXPECTED_STATUS"
+            fi
+
+            if [ "$attempt" -lt "$HEALTH_CHECK_RETRIES" ]; then
+              sleep "$HEALTH_CHECK_RETRY_INTERVAL"
+            fi
+            attempt=$((attempt + 1))
+          done
+
+          echo "::error::Server health check failed."
+          echo "::group::Last health check response"
+          head -c 1200 "$response_file" || true
+          echo
+          echo "::endgroup::"
+          exit 1
+          REMOTE_HEALTH_CHECK
+            echo "server_health_check completed."
           fi
 
           echo "::endgroup::"
@@ -1517,6 +1647,7 @@ jobs:
           LATEST_TAG: ${{ needs.version.outputs.latest_tag }}
           REPOSITORY_PATH: ${{ needs.build.outputs.repository_path }}
           PREVIEW_URL: ${{ needs.build.outputs.preview_url }}
+          SERVER_HEALTH_CHECK_URL: ${{ needs.build.outputs.server_health_check_url }}
           SERVER_CLEAN_MODE: ${{ inputs.server_clean_mode }}
           SOURCE_TYPE: ${{ needs.build.outputs.source_type }}
           FILE_COUNT: ${{ needs.build.outputs.file_count }}
@@ -1553,6 +1684,7 @@ jobs:
             echo "- Tag created: $tag_created"
             echo "- Repository path: ${REPOSITORY_PATH:-<empty>}"
             echo "- Preview URL: ${PREVIEW_URL:-<empty>}"
+            echo "- Server health check URL: $([ -n "$SERVER_HEALTH_CHECK_URL" ] && echo '<configured>' || echo '<empty>')"
             echo "- Build output: ${SOURCE_TYPE:-<unknown>}, files=${FILE_COUNT:-0}, size=${ARTIFACT_SIZE:-<unknown>}"
             echo "- Server clean mode: $SERVER_CLEAN_MODE"
             echo "- Deploy job: $deploy_result"
@@ -1566,6 +1698,7 @@ jobs:
           echo "environment=$DEPLOY_ENV"
           echo "version=${RELEASE_VERSION:-<unresolved>}"
           echo "repository_path=${REPOSITORY_PATH:-<empty>}"
+          echo "server_health_check_url=$([ -n "$SERVER_HEALTH_CHECK_URL" ] && echo '<configured>' || echo '<empty>')"
           echo "deploy_job=$deploy_result"
           echo "report_job=$report_result"
           echo "notify_job=$notify_result"

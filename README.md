@@ -210,6 +210,13 @@ jobs:
           "prod": "/var/www/example/html",
           "uat": "/var/www/example/html/uat"
         }
+      server_health_check_url_map: |
+        {
+          "prod": "http://127.0.0.1:3000/health",
+          "uat": "http://127.0.0.1:3001/health"
+        }
+      server_health_check_expected_texts: |
+        ["ok"]
     secrets:
       SSH_HOST: ${{ secrets.SSH_HOST }}
       SSH_USERNAME: ${{ secrets.SSH_USERNAME }}
@@ -220,11 +227,12 @@ jobs:
 
 ### Workflow 接入最佳实践
 
-- 公共边界：公共 workflow 负责版本、安装、构建、产物打包、SSH/小程序/R2 部署、通知、上报和摘要；业务 workflow 只保留构建命令、路径、PM2 命令、品牌密钥映射、R2 bucket 和公开 URL。
+- 公共边界：公共 workflow 负责版本、安装、构建、产物打包、SSH/小程序/R2 部署、服务器健康检查、通知、上报和摘要；业务 workflow 只保留构建命令、路径、PM2 命令、品牌密钥映射、R2 bucket、公开 URL 和健康检查 URL。
 - 单一版本来源：release workflow 只输出 `version`（如 `v1.2.3`）和 `version_number`（如 `1.2.3`），业务项目不要再次自行计算。
 - 默认注入：`build_command` 会收到 `RELEASE_VERSION`、`RELEASE_VERSION_NUMBER`、`XSHULINER_TAG_VERSION`、`XSHULINER_RELEASE_VERSION`、`XSHULINER_APP_VERSION`、`XSHULINER_RELEASE_ID`、`XSHULINER_BUILD_ID` 等变量。
 - checkout：需要 Git 信息的 job 使用 `actions/checkout` 并设置 `fetch-depth: 0`。
 - 生成顺序：在前端构建命令之前运行 `xbi generate`，确保产物里的 `build-info.js` 和 `build-info.json` 跟随同一次构建。
+- 健康检查：服务器部署后需要 HTTP 验证时，使用 `server_health_check_url` 或 `server_health_check_url_map` 声明从远端服务器访问的 URL；用 `server_health_check_expected_texts` 声明响应里必须出现的 marker。
 - 手动入口：`env` 统一描述为 `Deployment environment (prod, uat).`，默认 `prod`，顺序 `prod`、`uat`；`bump` 统一描述为 `Version bump before deploy (major, feat, fix, none).`，默认 `feat`，顺序 `major`、`feat`、`fix`、`none`。
 - 版本语义：`major` 增加大版本号，`feat` 增加中版本号，`fix` 增加小版本号；公共 workflow 为兼容旧调用仍接受 `minor`/`patch`，但业务项目手动入口只展示 `major`、`feat`、`fix`、`none`。
 - `bump: none`：复用最新 tag，不创建新 tag；公共 workflow 仍会注入解析出的版本，并临时同步 `package.json.version` 用于本次构建。
